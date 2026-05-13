@@ -1,0 +1,47 @@
+# Kconfig for XY GUI Component
+
+config GUI_ENABLED
+    bool "GUI component support"
+    default y
+    help
+      Enable support for the GUI component.
+      This component provides graphics user interface functionality.
+
+if GUI_ENABLED
+
+config GUI_WIDGETS
+    bool "Enable GUI widgets"
+    default y
+    depends on GUI_ENABLED
+    help
+      Enable GUI widget support (buttons, labels, containers, etc.).
+
+config GUI_EFFECTS
+    bool "Enable GUI effects"
+    default y
+    depends on GUI_ENABLED
+    help
+      Enable GUI visual effects (animations, transitions, etc.).
+
+config GUI_FONTS
+    bool "Enable GUI fonts"
+    default y
+    depends on GUI_ENABLED
+    help
+      Enable GUI font rendering support.
+
+config GUI_TEST
+    bool "Enable GUI component tests"
+    default n
+    depends on GUI_ENABLED
+    help
+      Enable unit tests for the GUI component.
+
+config GUI_EXAMPLE
+    bool "Enable GUI component examples"
+    default n
+    depends on GUI_ENABLED
+    help
+      Enable example applications for the GUI component.
+
+endif # GUI_ENABLED

@@ -1,0 +1,61 @@
+# Kconfig for XY pm Component
+
+config XY_PM_ENABLE
+    bool "pm component support"
+    default n
+    help
+      Enable support for the pm component.
+      This component provides power management.
+
+if XY_PM_ENABLE
+
+config XY_PM_TEST
+    bool "Enable pm component tests"
+    default n
+    depends on XY_PM_ENABLE
+    help
+      Enable unit tests for the pm component.
+
+config XY_PM_EXAMPLE
+    bool "Enable pm component examples"
+    default n
+    depends on XY_PM_ENABLE
+    help
+      Enable example applications for the pm component.
+
+config XY_CHARGER_ENABLE
+    bool "Enable charger support"
+    default n
+    depends on XY_PM_ENABLE
+    help
+      Enable battery charger support with GPIO control.
+
+config XY_CHARGER_GPIO_PORT
+    int "Charger enable GPIO port"
+    default 0
+    depends on XY_CHARGER_ENABLE
+    help
+      GPIO port number for charger enable pin (platform-specific).
+
+config XY_CHARGER_GPIO_PIN
+    int "Charger enable GPIO pin"
+    default 0
+    depends on XY_CHARGER_ENABLE
+    help
+      GPIO pin number for charger enable pin.
+
+config XY_CHARGER_ACTIVE_HIGH
+    bool "Charger enable active high"
+    default y
+    depends on XY_CHARGER_ENABLE
+    help
+      Set to y if charger enable is active high, n for active low.
+
+config XY_FUEL_GAUGE_ENABLE
+    bool "Enable fuel gauge support"
+    default n
+    depends on XY_PM_ENABLE
+    help
+      Enable fuel gauge (battery capacity) support.
+
+endif # XY_PM_ENABLE

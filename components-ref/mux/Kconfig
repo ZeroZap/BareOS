@@ -1,0 +1,3 @@
+config COMPONENT_MUX
+    bool "MUX Component"
+    default y

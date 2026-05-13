@@ -1,0 +1,84 @@
+# XinYi Kernel Configuration
+
+menu "Kernel Components"
+
+config KERNEL_OSAL
+    bool "Enable OSAL (OS Abstraction Layer)"
+    default y
+    help
+      Operating System Abstraction Layer supporting multiple backends.
+
+menu "OSAL Backend Selection"
+
+config OSAL_BACKEND_FREERTOS
+    bool "FreeRTOS"
+    depends on KERNEL_OSAL
+    help
+      FreeRTOS backend (most popular RTOS).
+
+config OSAL_BACKEND_RTTHREAD
+    bool "RT-Thread"
+    depends on KERNEL_OSAL
+    help
+      RT-Thread backend (Chinese RTOS).
+
+config OSAL_BACKEND_RTX5
+    bool "CMSIS-RTX5"
+    depends on KERNEL_OSAL
+    help
+      ARM CMSIS-RTX5 backend.
+
+config OSAL_BACKEND_BAREMETAL
+    bool "Bare-metal (No OS)"
+    depends on KERNEL_OSAL
+    default y if !OSAL_BACKEND_FREERTOS && !OSAL_BACKEND_RTTHREAD && !OSAL_BACKEND_RTX5
+    help
+      Bare-metal mode without operating system.
+
+endmenu # OSAL Backend Selection
+
+config OSAL_MAX_TASKS
+    int "Maximum number of tasks"
+    default 16
+    range 4 64
+    help
+      Maximum number of concurrent tasks.
+
+config OSAL_MAX_SEMS
+    int "Maximum number of semaphores"
+    default 16
+    range 4 64
+
+config OSAL_MAX_MUTEXES
+    int "Maximum number of mutexes"
+    default 8
+    range 4 32
+
+config OSAL_MAX_QUEUES
+    int "Maximum number of message queues"
+    default 8
+    range 4 32
+
+config OSAL_DEFAULT_STACK_SIZE
+    int "Default task stack size (bytes)"
+    default 512
+    range 128 4096
+
+menu "Kernel Services"
+
+config KERNEL_SYSMON
+    bool "System Monitor"
+    default y
+    select KERNEL_OSAL
+    help
+      System monitoring and task list printing.
+
+config KERNEL_SCHEDULER
+    bool "Custom Scheduler"
+    default n
+    help
+      Custom scheduler for bare-metal mode.
+
+endmenu # Kernel Services
+
+endmenu # Kernel Components

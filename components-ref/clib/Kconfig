@@ -1,0 +1,3 @@
+config COMPONENT_CLIB
+    bool "CLIB Component"
+    default y

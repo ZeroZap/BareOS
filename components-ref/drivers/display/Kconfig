@@ -1,0 +1,54 @@
+# Kconfig for XY Display Component
+
+config DRIVER_DISPLAY
+    bool "display driver support"
+    default n
+    help
+      Enable support for display drivers.
+      This includes OLED, LCD, LED, and RGB displays.
+
+if DRIVER_DISPLAY
+
+config DRIVER_DISPLAY_SSD1306
+    bool "SSD1306 OLED driver"
+    default n
+    depends on DRIVER_DISPLAY
+    help
+      Enable SSD1306 OLED display driver support.
+
+config DRIVER_DISPLAY_LCD
+    bool "LCD display driver"
+    default n
+    depends on DRIVER_DISPLAY
+    help
+      Enable LCD display driver support.
+
+config DRIVER_DISPLAY_LED
+    bool "LED display driver"
+    default n
+    depends on DRIVER_DISPLAY
+    help
+      Enable LED display driver support.
+
+config DRIVER_DISPLAY_RGB
+    bool "RGB LED driver"
+    default n
+    depends on DRIVER_DISPLAY
+    help
+      Enable RGB LED matrix driver support.
+
+config DRIVER_DISPLAY_TEST
+    bool "Enable display driver tests"
+    default n
+    depends on DRIVER_DISPLAY
+    help
+      Enable unit tests for display drivers.
+
+config DRIVER_DISPLAY_EXAMPLE
+    bool "Enable display driver examples"
+    default n
+    depends on DRIVER_DISPLAY
+    help
+      Enable example applications for display drivers.
+
+endif # DRIVER_DISPLAY

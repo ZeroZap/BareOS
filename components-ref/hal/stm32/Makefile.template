@@ -1,0 +1,110 @@
+##
+## @file Makefile.template
+## @brief Template Makefile for building XY HAL with STM32
+## @version 2.0
+## @date 2025-10-26
+##
+## This is a template Makefile showing how to integrate XY HAL into
+## your STM32 project build system.
+##
+
+# STM32 sub-series selection - modify according to your MCU
+STM32_SERIES ?= stm32f4
+# Target chip configuration
+STM32_FAMILY = STM32F4
+STM32_DEVICE = STM32F407xx
+
+# Compiler
+CC = arm-none-eabi-gcc
+AR = arm-none-eabi-ar
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+SERIES_DIR = $(STM32_SERIES)
+
+# Include paths
+INCLUDES = -I../inc \
+           -I. \
+           -I../../.. \
+           -I$(STM32_HAL_PATH)/Inc \
+           -I$(CMSIS_PATH)/Include \
+           -I$(CMSIS_DEVICE_PATH)/Include
+
+# Defines
+DEFINES = -D$(STM32_FAMILY) \
+          -D$(STM32_DEVICE) \
+          -DSTM32_HAL_ENABLED \
+          -DUSE_HAL_DRIVER
+
+# Compiler flags
+CFLAGS = -mcpu=cortex-m4 \
+         -mthumb \
+         -mfpu=fpv4-sp-d16 \
+         -mfloat-abi=hard \
+         -O2 \
+         -g \
+         -Wall \
+         -fdata-sections \
+         -ffunction-sections \
+         $(INCLUDES) \
+         $(DEFINES)
+
+# Source files - automatically find all .c files in the series directory
+SRCS = $(wildcard $(SERIES_DIR)/*.c)
+
+# Object files
+OBJS = $(patsubst $(SERIES_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
+
+# Output library
+TARGET_LIB = $(BUILD_DIR)/libxy_hal_stm32.a
+
+# Default target
+all: $(TARGET_LIB)
+
+# Create build directories
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
+
+# Build library
+$(TARGET_LIB): $(BUILD_DIR) $(OBJ_DIR) $(OBJS)
+	$(AR) rcs $@ $(OBJS)
+	@echo "Built library: $(TARGET_LIB)"
+
+# Compile source files
+$(OBJ_DIR)/%.o: $(SERIES_DIR)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Clean
+clean:
+	rm -rf $(BUILD_DIR)
+
+# Print configuration
+info:
+	@echo "STM32 Series: $(STM32_SERIES)"
+	@echo "STM32 Family: $(STM32_FAMILY)"
+	@echo "Device: $(STM32_DEVICE)"
+	@echo "Sources: $(SRCS)"
+	@echo "Objects: $(OBJS)"
+	@echo "Target: $(TARGET_LIB)"
+
+.PHONY: all clean info
+
+##
+## Usage Example:
+##
+## 1. Set STM32 series and HAL path:
+##    export STM32_SERIES=stm32f4  # or stm32u0, stm32l4, stm32h7
+##    export STM32_HAL_PATH=/path/to/STM32CubeF4/Drivers/STM32F4xx_HAL_Driver
+##    export CMSIS_PATH=/path/to/STM32CubeF4/Drivers/CMSIS
+##    export CMSIS_DEVICE_PATH=/path/to/STM32CubeF4/Drivers/CMSIS/Device/ST/STM32F4xx
+##
+## 2. Build:
+##    make STM32_SERIES=stm32f4
+##
+## 3. Link in your project:
+##    -L$(XY_HAL_PATH)/build -lxy_hal_stm32
+##

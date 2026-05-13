@@ -1,0 +1,40 @@
+#ifndef __SENSOR_CONFIG_EMBEDDED_H__
+#define __SENSOR_CONFIG_EMBEDDED_H__
+
+/* 嵌入式配置 - 平衡功能和资源 */
+
+#define SENSOR_MAX_DEVICES  12
+#define SENSOR_NAME_MAX_LEN 24
+
+/* 启用常用功能 */
+#define SENSOR_ENABLE_FIFO       1
+#define SENSOR_DEFAULT_FIFO_SIZE 32
+
+#define SENSOR_ENABLE_INTERRUPT 1
+
+#define SENSOR_ENABLE_CALIBRATION  1
+#define SENSOR_CALIBRATION_SAMPLES 50
+
+#define SENSOR_ENABLE_FILTER       1
+#define SENSOR_DEFAULT_FILTER_SIZE 4
+
+#define SENSOR_ENABLE_DMA 0 /* DMA需要硬件支持 */
+
+#define SENSOR_ENABLE_FUSION      1
+#define SENSOR_FUSION_SAMPLE_FREQ 100.0f
+
+#define SENSOR_ENABLE_POWER_MGMT    1
+#define SENSOR_ENABLE_SELF_TEST     1
+#define SENSOR_ENABLE_THRESHOLD     1
+#define SENSOR_ENABLE_MOTION_DETECT 1
+
+/* 系统配置 */
+#define SENSOR_USE_FILE_SYSTEM 0
+#define SENSOR_USE_OSAL        1 /* 使用RTOS */
+#define SENSOR_USE_MALLOC      1
+#define SENSOR_USE_FLOAT       1
+
+/* 调试 */
+#define SENSOR_DEBUG 0
+
+#endif

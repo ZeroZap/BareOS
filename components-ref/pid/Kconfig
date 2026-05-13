@@ -1,0 +1,17 @@
+config COMPONENT_PID
+    bool "PID Controller"
+    default y
+    help
+      PID (Proportional-Integral-Derivative) controller.
+
+config PID_DEFAULT_KP
+    float "Default Proportional Gain"
+    default 1.0
+
+config PID_DEFAULT_KI
+    float "Default Integral Gain"
+    default 0.1
+
+config PID_DEFAULT_KD
+    float "Default Derivative Gain"
+    default 0.05

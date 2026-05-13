@@ -1,0 +1,257 @@
+# XinYi OSAL Kconfig Configuration
+
+menu "XinYi OSAL Configuration"
+
+config XY_OSAL_ENABLED
+    bool "Enable OSAL"
+    default y
+    help
+        Enable XinYi Operating System Abstraction Layer
+
+choice
+    prompt "OSAL Backend Selection"
+    default XY_OS_BACKEND_BAREMETAL
+    help
+        Select the RTOS backend for XY OSAL.
+        Only one backend can be selected at a time.
+
+config XY_OS_BACKEND_BAREMETAL
+    bool "Bare-metal (No RTOS)"
+    help
+        Use bare-metal backend without RTOS.
+        Provides basic kernel control and delay functions.
+        Threading and synchronization features are stubs.
+
+config XY_OS_BACKEND_FREERTOS
+    bool "FreeRTOS"
+    help
+        Use FreeRTOS backend.
+        Provides full RTOS features including:
+        - Task management
+        - Mutex, Semaphore, Event Groups
+        - Message Queues
+        - Software Timers
+
+config XY_OS_BACKEND_RTTHREAD
+    bool "RT-Thread"
+    help
+        Use RT-Thread backend.
+        Provides full RTOS features including:
+        - Thread management
+        - Mutex with priority inheritance
+        - Semaphore, Event Flags
+        - Message Queues
+        - Memory Pools
+        - Software Timers
+
+config XY_OS_BACKEND_CMSIS_RTX
+    bool "CMSIS-RTX"
+    help
+        Use CMSIS-RTOS2 (RTX5) backend.
+        Provides CMSIS-RTOS2 standard API.
+
+endchoice
+
+# Feature Configuration
+menu "OSAL Features"
+
+config XY_OS_FEATURE_THREAD
+    bool "Enable Thread Management"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable thread/task management features.
+        Disabled for bare-metal backend.
+
+config XY_OS_FEATURE_THREAD_FLAGS
+    bool "Enable Thread Flags"
+    default y
+    depends on XY_OS_FEATURE_THREAD
+    help
+        Enable thread flags/notification features.
+
+config XY_OS_FEATURE_MUTEX
+    bool "Enable Mutex Support"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable mutex synchronization primitive.
+
+config XY_OS_FEATURE_SEMAPHORE
+    bool "Enable Semaphore Support"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable semaphore synchronization primitive.
+
+config XY_OS_FEATURE_EVENT_FLAGS
+    bool "Enable Event Flags Support"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable event flags synchronization primitive.
+
+config XY_OS_FEATURE_MESSAGE_QUEUE
+    bool "Enable Message Queue Support"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable inter-thread message queues.
+
+config XY_OS_FEATURE_MEMORY_POOL
+    bool "Enable Memory Pool Support"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable fixed-size memory pool allocation.
+
+config XY_OS_FEATURE_TIMER
+    bool "Enable Software Timer Support"
+    default y
+    depends on !XY_OS_BACKEND_BAREMETAL
+    help
+        Enable software timers.
+        Bare-metal backend uses xy_timer_sw module.
+
+config XY_OS_FEATURE_DELAY
+    bool "Enable Delay Functions"
+    default y
+    help
+        Enable delay and delay_until functions.
+
+endchoice
+
+# Configuration Parameters
+menu "OSAL Parameters"
+
+config XY_OS_DEFAULT_STACK_SIZE
+    int "Default Thread Stack Size"
+    default 1024 if XY_OS_BACKEND_BAREMETAL
+    default 2048 if XY_OS_BACKEND_FREERTOS
+    default 2048 if XY_OS_BACKEND_RTTHREAD
+    default 2048 if XY_OS_BACKEND_CMSIS_RTX
+    help
+        Default stack size for threads in bytes.
+
+config XY_OS_DEFAULT_PRIORITY
+    int "Default Thread Priority"
+    default 24
+    range 0 56
+    help
+        Default priority for new threads.
+        Range: 0 (lowest) to 56 (highest).
+
+config XY_OS_TICK_FREQ
+    int "System Tick Frequency (Hz)"
+    default 1000
+    help
+        System tick frequency in Hz.
+        1000 = 1ms tick period.
+
+config XY_OS_MAX_PRIORITY_LEVELS
+    int "Maximum Priority Levels"
+    default 57
+    help
+        Number of priority levels (0 to N-1).
+
+config XY_OS_DEFAULT_TIMEOUT
+    int "Default Timeout (ticks)"
+    default 5000
+    help
+        Default timeout for blocking operations in ticks.
+
+endchoice
+
+# Debug and Safety
+menu "Debug and Safety"
+
+config XY_OS_PARAM_CHECK
+    bool "Enable Parameter Validation"
+    default y
+    help
+        Enable parameter validation checks.
+        Disable in production for smaller code size.
+
+config XY_OS_ISR_CHECK
+    bool "Enable ISR Context Detection"
+    default y
+    help
+        Enable ISR context detection.
+        Helps prevent API misuse from interrupt handlers.
+
+config XY_OS_NULL_CHECK
+    bool "Enable NULL Pointer Checks"
+    default y
+    help
+        Enable NULL pointer validation.
+
+config XY_OS_ENABLE_STATS
+    bool "Enable Statistics Collection"
+    default n
+    help
+        Enable OSAL statistics collection.
+        Useful for debugging and performance analysis.
+
+endchoice
+
+# Backend-Specific Configuration
+menu "Backend-Specific Configuration"
+
+config XY_OS_FREERTOS_USE_TICKLESS
+    bool "Enable FreeRTOS Tickless Idle Mode"
+    default n
+    depends on XY_OS_BACKEND_FREERTOS
+    help
+        Enable tickless idle mode for power saving.
+
+config XY_OS_FREERTOS_HEAP_TYPE
+    int "FreeRTOS Heap Type"
+    default 4
+    range 1 5
+    depends on XY_OS_BACKEND_FREERTOS
+    help
+        FreeRTOS memory heap scheme (1-5).
+        heap_4 is recommended for most applications.
+
+config XY_OS_RTTHREAD_HOOK_ENABLE
+    bool "Enable RT-Thread Hooks"
+    default n
+    depends on XY_OS_BACKEND_RTTHREAD
+    help
+        Enable RT-Thread callback hooks.
+
+config XY_OS_BAREMETAL_USE_SYSTICK
+    bool "Use SysTick for Bare-metal Timing"
+    default y
+    depends on XY_OS_BACKEND_BAREMETAL
+    help
+        Use ARM SysTick timer for bare-metal timing.
+
+config XY_OS_BAREMETAL_MAX_TIMERS
+    int "Maximum Software Timers (Bare-metal)"
+    default 8
+    depends on XY_OS_BACKEND_BAREMETAL
+    help
+        Maximum number of software timers in bare-metal mode.
+
+endchoice
+
+# Size Limits
+menu "Size Limits"
+
+config XY_OS_MAX_NAME_LENGTH
+    int "Maximum Object Name Length"
+    default 16
+    help
+        Maximum name length for OS objects (threads, mutexes, etc.).
+
+config XY_OS_MAX_THREAD_COUNT
+    int "Maximum Thread Count"
+    default 32
+    depends on XY_OS_FEATURE_THREAD
+    help
+        Maximum number of threads that can be enumerated.
+
+endchoice
+
+endmenu

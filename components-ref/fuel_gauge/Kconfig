@@ -1,0 +1,3 @@
+config COMPONENT_FUEL_GAUGE
+    bool "FUEL_GAUGE Component"
+    default y

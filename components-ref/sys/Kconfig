@@ -1,0 +1,18 @@
+config COMPONENT_SYS
+    bool "System Components"
+    default y
+
+config SYS_STATE_MACHINE
+    bool "State Machine Framework"
+    default y
+    depends on COMPONENT_SYS
+
+config SYS_TIMER
+    bool "Software Timer"
+    default y
+    depends on COMPONENT_SYS
+
+config SYS_MAX_TIMERS
+    int "Maximum timers"
+    default 8
+    range 4 32

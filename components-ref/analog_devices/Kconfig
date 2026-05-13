@@ -1,0 +1,3 @@
+config COMPONENT_ADDC
+    bool "Analog Devices Driver Collection"
+    default n

@@ -1,0 +1,26 @@
+# Kconfig for XY device Component
+
+config XY_DEVICE_ENABLE
+    bool "device component support"
+    default n
+    help
+      Enable support for the device component.
+      This component provides device drivers (charger, LED, flash, etc.).
+
+if XY_DEVICE_ENABLE
+
+config XY_DEVICE_TEST
+    bool "Enable device component tests"
+    default n
+    depends on XY_DEVICE_ENABLE
+    help
+      Enable unit tests for the device component.
+
+config XY_DEVICE_EXAMPLE
+    bool "Enable device component examples"
+    default n
+    depends on XY_DEVICE_ENABLE
+    help
+      Enable example applications for the device component.
+
+endif # XY_DEVICE_ENABLE

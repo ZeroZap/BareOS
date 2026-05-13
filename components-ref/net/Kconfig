@@ -1,0 +1,26 @@
+# Kconfig for XY net Component
+
+config XY_NET_ENABLE
+    bool "net component support"
+    default n
+    help
+      Enable support for the net component.
+      This component provides network protocols (MQTT, Modbus, AT, etc.).
+
+if XY_NET_ENABLE
+
+config XY_NET_TEST
+    bool "Enable net component tests"
+    default n
+    depends on XY_NET_ENABLE
+    help
+      Enable unit tests for the net component.
+
+config XY_NET_EXAMPLE
+    bool "Enable net component examples"
+    default n
+    depends on XY_NET_ENABLE
+    help
+      Enable example applications for the net component.
+
+endif # XY_NET_ENABLE

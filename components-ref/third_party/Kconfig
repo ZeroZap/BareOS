@@ -1,0 +1,3 @@
+config COMPONENT_THIRD_PARTY
+    bool "THIRD_PARTY Component"
+    default y

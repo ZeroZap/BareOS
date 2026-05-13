@@ -1,0 +1,21 @@
+# STM32U5 HAL CMakeLists.txt - Updated for Unified GPIO
+
+# Add unified GPIO device implementation
+target_sources(${HAL_TARGET} PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/xy_hal_gpio_device.c
+)
+
+# Add include directories
+target_include_directories(${HAL_TARGET} PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}
+    ${STM32U5_HAL_PATH}/Drivers/STM32U5xx_HAL_Driver/Inc
+    ${STM32U5_HAL_PATH}/Drivers/CMSIS/Device/ST/STM32U5xx/Include
+    ${STM32U5_HAL_PATH}/Drivers/CMSIS/Include
+)
+
+# Compile definitions for STM32U5
+target_compile_definitions(${HAL_TARGET} PRIVATE
+    USE_HAL_DRIVER
+    STM32U575xx
+    XY_HAL_PLATFORM_STM32U5=1
+)

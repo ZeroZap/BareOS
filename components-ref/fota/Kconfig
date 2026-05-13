@@ -1,0 +1,26 @@
+# Kconfig for XY fota Component
+
+config XY_FOTA_ENABLE
+    bool "fota component support"
+    default n
+    help
+      Enable support for the fota component.
+      This component provides firmware over-the-air update.
+
+if XY_FOTA_ENABLE
+
+config XY_FOTA_TEST
+    bool "Enable fota component tests"
+    default n
+    depends on XY_FOTA_ENABLE
+    help
+      Enable unit tests for the fota component.
+
+config XY_FOTA_EXAMPLE
+    bool "Enable fota component examples"
+    default n
+    depends on XY_FOTA_ENABLE
+    help
+      Enable example applications for the fota component.
+
+endif # XY_FOTA_ENABLE

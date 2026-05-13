@@ -1,0 +1,26 @@
+# Kconfig for XY misc Component
+
+config XY_MISC_ENABLE
+    bool "misc component support"
+    default n
+    help
+      Enable support for the misc component.
+      This component provides miscellaneous components.
+
+if XY_MISC_ENABLE
+
+config XY_MISC_TEST
+    bool "Enable misc component tests"
+    default n
+    depends on XY_MISC_ENABLE
+    help
+      Enable unit tests for the misc component.
+
+config XY_MISC_EXAMPLE
+    bool "Enable misc component examples"
+    default n
+    depends on XY_MISC_ENABLE
+    help
+      Enable example applications for the misc component.
+
+endif # XY_MISC_ENABLE

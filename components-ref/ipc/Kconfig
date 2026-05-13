@@ -1,0 +1,26 @@
+# Kconfig for XY ipc Component
+
+config XY_IPC_ENABLE
+    bool "ipc component support"
+    default n
+    help
+      Enable support for the ipc component.
+      This component provides inter-process communication.
+
+if XY_IPC_ENABLE
+
+config XY_IPC_TEST
+    bool "Enable ipc component tests"
+    default n
+    depends on XY_IPC_ENABLE
+    help
+      Enable unit tests for the ipc component.
+
+config XY_IPC_EXAMPLE
+    bool "Enable ipc component examples"
+    default n
+    depends on XY_IPC_ENABLE
+    help
+      Enable example applications for the ipc component.
+
+endif # XY_IPC_ENABLE

@@ -1,0 +1,26 @@
+# Kconfig for XY dm Component
+
+config XY_DM_ENABLE
+    bool "dm component support"
+    default n
+    help
+      Enable support for the dm component.
+      This component provides data management (EEPROM, Flash, TLV, etc.).
+
+if XY_DM_ENABLE
+
+config XY_DM_TEST
+    bool "Enable dm component tests"
+    default n
+    depends on XY_DM_ENABLE
+    help
+      Enable unit tests for the dm component.
+
+config XY_DM_EXAMPLE
+    bool "Enable dm component examples"
+    default n
+    depends on XY_DM_ENABLE
+    help
+      Enable example applications for the dm component.
+
+endif # XY_DM_ENABLE

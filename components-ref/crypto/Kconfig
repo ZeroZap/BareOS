@@ -1,0 +1,26 @@
+# Kconfig for XY crypto Component
+
+config XY_CRYPTO_ENABLE
+    bool "crypto component support"
+    default n
+    help
+      Enable support for the crypto component.
+      This component provides cryptographic algorithms (AES, HMAC, MD5, SHA256, etc.).
+
+if XY_CRYPTO_ENABLE
+
+config XY_CRYPTO_TEST
+    bool "Enable crypto component tests"
+    default n
+    depends on XY_CRYPTO_ENABLE
+    help
+      Enable unit tests for the crypto component.
+
+config XY_CRYPTO_EXAMPLE
+    bool "Enable crypto component examples"
+    default n
+    depends on XY_CRYPTO_ENABLE
+    help
+      Enable example applications for the crypto component.
+
+endif # XY_CRYPTO_ENABLE

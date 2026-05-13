@@ -1,0 +1,26 @@
+# Kconfig for XY trace Component
+
+config XY_TRACE_ENABLE
+    bool "trace component support"
+    default n
+    help
+      Enable support for the trace component.
+      This component provides logging system.
+
+if XY_TRACE_ENABLE
+
+config XY_TRACE_TEST
+    bool "Enable trace component tests"
+    default n
+    depends on XY_TRACE_ENABLE
+    help
+      Enable unit tests for the trace component.
+
+config XY_TRACE_EXAMPLE
+    bool "Enable trace component examples"
+    default n
+    depends on XY_TRACE_ENABLE
+    help
+      Enable example applications for the trace component.
+
+endif # XY_TRACE_ENABLE

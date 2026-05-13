@@ -1,0 +1,26 @@
+# Kconfig for XY xy_key Component
+
+config XY_XY_KEY_ENABLE
+    bool "xy_key component support"
+    default n
+    help
+      Enable support for the xy_key component.
+      This component provides key management.
+
+if XY_XY_KEY_ENABLE
+
+config XY_XY_KEY_TEST
+    bool "Enable xy_key component tests"
+    default n
+    depends on XY_XY_KEY_ENABLE
+    help
+      Enable unit tests for the xy_key component.
+
+config XY_XY_KEY_EXAMPLE
+    bool "Enable xy_key component examples"
+    default n
+    depends on XY_XY_KEY_ENABLE
+    help
+      Enable example applications for the xy_key component.
+
+endif # XY_XY_KEY_ENABLE

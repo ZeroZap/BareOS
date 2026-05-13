@@ -1,0 +1,26 @@
+# Kconfig for XY osal Component
+
+config XY_OSAL_ENABLE
+    bool "osal component support"
+    default n
+    help
+      Enable support for the osal component.
+      This component provides OS abstraction layer.
+
+if XY_OSAL_ENABLE
+
+config XY_OSAL_TEST
+    bool "Enable osal component tests"
+    default n
+    depends on XY_OSAL_ENABLE
+    help
+      Enable unit tests for the osal component.
+
+config XY_OSAL_EXAMPLE
+    bool "Enable osal component examples"
+    default n
+    depends on XY_OSAL_ENABLE
+    help
+      Enable example applications for the osal component.
+
+endif # XY_OSAL_ENABLE
