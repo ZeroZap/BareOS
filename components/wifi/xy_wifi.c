@@ -91,26 +91,34 @@ static void parse_ip(const char *buf, char *ip, int iplen)
 
 /* ── socket receive URC  "+IPD,<id>,<len>:"  (endmark ':') ─────────── */
 
+/* Header parser for "+IPD,<id>,<len>:" */
+static int parse_ipd_hdr(const char *buf, int len, int *id, int *bytes, int *hdr)
+{
+    (void)len;
+    const char *p = buf;
+    while (*p && *p != ',') p++;       /* skip "+IPD" */
+    if (*p != ',') return -1;
+    p++;
+    *id    = (int)xy_strtol(p, (char **)&p, 10);
+    if (*p != ',') return -1;
+    p++;
+    *bytes = (int)xy_strtol(p, (char **)&p, 10);
+    /* p now points at ':' (the endmark, included in hdr_len) */
+    *hdr   = (int)(p - buf) + 1;
+    return 0;
+}
+
 static int urc_ipd(at_urc_info_t *info)
 {
-    const char *p = info->urcbuf;
-    /* skip "+IPD," */
-    while (*p && *p != ',') p++;
-    if (*p == ',') p++;
-    int id  = (int)xy_strtol(p, (char **)&p, 10);
-    if (*p == ',') p++;
-    int len = (int)xy_strtol(p, (char **)&p, 10);
-    /* p now points at ':' */
+    int id, plen, rc;
+    const char *payload;
 
-    if (id < 0 || id >= XY_WIFI_SOCK_MAX || len <= 0) return 0;
+    rc = at_urc_recv_split(info, parse_ipd_hdr, 0, &id, &payload, &plen);
+    if (rc > 0) return rc;             /* need more bytes */
+    if (rc < 0) return 0;              /* bad header */
 
-    int hdr_len = (int)(p - info->urcbuf) + 1; /* +1 for ':' */
-    if (info->urclen == hdr_len) return len;
-
-    if (g_socks[id].open)
-        xy_rb_put(&g_socks[id].rx,
-                  (const uint8_t *)(info->urcbuf + hdr_len),
-                  (uint32_t)(info->urclen - hdr_len));
+    if (id >= 0 && id < XY_WIFI_SOCK_MAX && g_socks[id].open)
+        xy_rb_put(&g_socks[id].rx, (const uint8_t *)payload, (uint32_t)plen);
     return 0;
 }
 

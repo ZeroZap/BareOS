@@ -343,6 +343,49 @@ void at_raw_transport_enter(at_obj_t *obj, const at_raw_trans_conf_t *conf);
 void at_raw_transport_exit(at_obj_t *obj);
 #endif //End of AT_RAW_TRANSPARENT_EN
 
+/* ── URC binary-payload accumulator (shared by cell/wifi drivers) ─────────
+ *
+ * Many modem URCs follow the same shape:
+ *
+ *   "+RECEIVE,<id>,<len>:<binary len bytes>"        (SIM7600, endmark ':')
+ *   "+IPD,<id>,<len>:<binary len bytes>"            (ESP-AT,  endmark ':')
+ *   "+QIURC: \"recv\",<id>,<len>\n<binary><CRLF>"   (Quectel,  endmark '\n')
+ *   "+GTRECV: <id>,<len>\n<binary><CRLF>"           (Fibocom,  endmark '\n')
+ *
+ * The AT framework calls the URC handler twice: first when the endmark is
+ * hit (header only), then again after the requested trailing bytes arrive.
+ * at_urc_recv_split() factors out the common two-phase logic; each driver
+ * supplies only a tiny header parser and the trailing-byte count.
+ *
+ * Header parser contract:
+ *   Given the URC buffer (NUL-terminated up to urclen), parse the socket id
+ *   and payload byte count, and return the total header byte count via
+ *   *out_hdr_len. Return 0 on success, -1 to reject the URC.
+ */
+typedef int (*at_urc_bin_parse_t)(const char *buf, int len,
+                                  int *out_id, int *out_bytes,
+                                  int *out_hdr_len);
+
+/**
+ * Returns:
+ *   >0  — first call detected; caller should `return rc;` from the URC
+ *         handler so the framework waits for `rc` more bytes.
+ *   <0  — header parse failed or payload not present; treat as no-op,
+ *         caller should `return 0;`.
+ *    0  — payload ready. *out_id / *out_payload / *out_payload_len are
+ *         filled. Caller copies the payload to its socket ring buffer.
+ *
+ * trail_bytes: extra framing bytes the modem appends after the binary
+ *              payload (e.g. 2 for CRLF on '\n'-terminated headers, 0 for
+ *              ':'-terminated headers).
+ */
+int at_urc_recv_split(at_urc_info_t *info,
+                      at_urc_bin_parse_t parse,
+                      int trail_bytes,
+                      int *out_id,
+                      const char **out_payload,
+                      int *out_payload_len);
+
 /* ── Async-op helper macros (shared by cell/wifi drivers) ─────────────────
  * For use inside work handlers that complete an async operation.
  * The op struct must contain `done` (bool) and `code` (at_resp_code) fields.

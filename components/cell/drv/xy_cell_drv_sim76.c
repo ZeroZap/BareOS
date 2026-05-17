@@ -4,31 +4,34 @@
 
 /* ── socket receive URC  "+RECEIVE,<id>,<len>:"  (endmark ':') ───────── */
 
+/* Header parser for "+RECEIVE,<id>,<len>:" */
+static int parse_receive_hdr(const char *buf, int len,
+                             int *id, int *bytes, int *hdr)
+{
+    (void)len;
+    const char *p = buf;
+    while (*p && *p != ',') p++;
+    if (*p != ',') return -1;
+    p++;
+    *id    = (int)xy_strtol(p, (char **)&p, 10);
+    if (*p != ',') return -1;
+    p++;
+    *bytes = (int)xy_strtol(p, (char **)&p, 10);
+    *hdr   = (int)(p - buf) + 1;       /* include ':' */
+    return 0;
+}
+
 static int urc_receive(at_urc_info_t *info)
 {
-    const char *p = info->urcbuf;
-    /* skip "+RECEIVE," */
-    while (*p && *p != ',') p++;
-    if (*p == ',') p++;
-    int id  = (int)xy_strtol(p, (char **)&p, 10);
-    if (*p == ',') p++;
-    int len = (int)xy_strtol(p, (char **)&p, 10);
-    /* p now points at ':' */
+    int id, plen, rc;
+    const char *payload;
 
-    if (id < 0 || id >= XY_CELL_SOCK_MAX || len <= 0) return 0;
+    rc = at_urc_recv_split(info, parse_receive_hdr, 0, &id, &payload, &plen);
+    if (rc > 0) return rc;
+    if (rc < 0) return 0;
 
-    int hdr_len = (int)(p - info->urcbuf) + 1; /* +1 for ':' */
-
-    if (info->urclen == hdr_len) {
-        return len; /* request binary payload bytes */
-    }
-
-    /* Second call: copy binary data into socket ring buffer */
-    if (g_cell_socks[id].open) {
-        xy_rb_put(&g_cell_socks[id].rx,
-                  (const uint8_t *)(info->urcbuf + hdr_len),
-                  (uint32_t)(info->urclen - hdr_len));
-    }
+    if (id >= 0 && id < XY_CELL_SOCK_MAX && g_cell_socks[id].open)
+        xy_rb_put(&g_cell_socks[id].rx, (const uint8_t *)payload, (uint32_t)plen);
     return 0;
 }
 

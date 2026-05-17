@@ -1315,8 +1315,8 @@ void at_obj_process(at_obj_t *at)
     if (ai->raw_trans) {
         at_raw_trans_process(at);
         return;
-    }    
-#endif    
+    }
+#endif
     read_size = __get_adapter(ai)->read(rbuf, sizeof(rbuf));
 #if AT_URC_WARCH_EN
         urc_recv_process(ai, rbuf, read_size);
@@ -1325,3 +1325,40 @@ void at_obj_process(at_obj_t *at)
     at_work_process(ai);
 }
 
+/**
+ * @brief Two-phase URC binary payload accumulator. See header for contract.
+ */
+int at_urc_recv_split(at_urc_info_t *info,
+                      at_urc_bin_parse_t parse,
+                      int trail_bytes,
+                      int *out_id,
+                      const char **out_payload,
+                      int *out_payload_len)
+{
+    int id      = -1;
+    int bytes   = 0;
+    int hdr_len = 0;
+
+    if (info == NULL || parse == NULL || info->urcbuf == NULL)
+        return -1;
+
+    if (parse(info->urcbuf, info->urclen, &id, &bytes, &hdr_len) != 0)
+        return -1;
+    if (bytes <= 0 || hdr_len <= 0)
+        return -1;
+
+    /* First call: header only; ask the framework for `bytes` more bytes
+     * plus any trailing framing the modem adds (CRLF, etc.). */
+    if (info->urclen <= hdr_len)
+        return bytes + trail_bytes;
+
+    /* Second call: payload sits at [hdr_len .. hdr_len+bytes). */
+    int avail = info->urclen - hdr_len;
+    if (avail > bytes) avail = bytes;
+    if (avail <= 0) return -1;
+
+    if (out_id)          *out_id          = id;
+    if (out_payload)     *out_payload     = info->urcbuf + hdr_len;
+    if (out_payload_len) *out_payload_len = avail;
+    return 0;
+}

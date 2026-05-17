@@ -6,48 +6,38 @@
  *  "+QIURC: \"recv\",<id>,<len>\n<data>"  (endmark '\n')
  * ─────────────────────────────────────────────────────────────────────── */
 
+/* Header parser: "+QIURC: \"recv\",<id>,<len>\n" */
+static int parse_qirecv_hdr(const char *buf, int len,
+                            int *id, int *bytes, int *hdr)
+{
+    int i;
+    for (i = 0; i < len; i++) {
+        if (buf[i] == '\n') { *hdr = i + 1; break; }
+    }
+    if (i >= len) return -1;
+
+    const char *q = strstr(buf, "\"recv\",");
+    if (!q || (q - buf) > *hdr) return -1;
+    q += 7;
+    *id    = (int)xy_strtol(q, (char **)&q, 10);
+    if (*q != ',') return -1;
+    q++;
+    *bytes = (int)xy_strtol(q, NULL, 10);
+    return 0;
+}
+
 static int urc_qirecv(at_urc_info_t *info)
 {
-    const char *p = info->urcbuf;
-    int hdr_end = 0, i;
+    int id, plen, rc;
+    const char *payload;
 
-    for (i = 0; i < info->urclen; i++) {
-        if (p[i] == '\n') { hdr_end = i + 1; break; }
-    }
-    if (!hdr_end) return 0;
+    /* Quectel appends CRLF after binary payload — request 2 trail bytes. */
+    rc = at_urc_recv_split(info, parse_qirecv_hdr, 2, &id, &payload, &plen);
+    if (rc > 0) return rc;
+    if (rc < 0) return 0;
 
-    if (info->urclen == hdr_end) {
-        /* Parse id and len from "+QIURC: "recv",<id>,<len>" */
-        const char *q = strstr(p, "\"recv\",");
-        if (!q) return 0;
-        q += 7;
-        int id  = (int)xy_strtol(q, (char **)&q, 10);
-        if (*q == ',') q++;
-        int len = (int)xy_strtol(q, NULL, 10);
-        if (id < 0 || id >= XY_CELL_SOCK_MAX || len <= 0) return 0;
-        /* Store id in upper bits of payloadlen via static */
-        /* Use a simple static trick: encode as id*65536+len */
-        (void)id; (void)len;
-        /* Actually we just need to return how many bytes to collect.
-         * We don't need id at this point — second call will have full buffer. */
-        return len + 2; /* data + CRLF */
-    }
-
-    /* Second call: parse id and len again from full buffer, copy data */
-    const char *q = strstr(p, "\"recv\",");
-    if (!q) return 0;
-    q += 7;
-    int id  = (int)xy_strtol(q, (char **)&q, 10);
-    if (*q == ',') q++;
-    int len = (int)xy_strtol(q, NULL, 10);
-    if (id < 0 || id >= XY_CELL_SOCK_MAX || len <= 0) return 0;
-
-    if (g_cell_socks[id].open) {
-        int avail = info->urclen - hdr_end;
-        int n = (avail < len) ? avail : len;
-        xy_rb_put(&g_cell_socks[id].rx,
-                  (const uint8_t *)(info->urcbuf + hdr_end), (uint32_t)n);
-    }
+    if (id >= 0 && id < XY_CELL_SOCK_MAX && g_cell_socks[id].open)
+        xy_rb_put(&g_cell_socks[id].rx, (const uint8_t *)payload, (uint32_t)plen);
     return 0;
 }
 
