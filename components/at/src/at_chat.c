@@ -27,9 +27,9 @@
 #include "at_port.h"
 #include "linux_list.h"
 #include <stdarg.h>
-#include <string.h>
-#include <stdio.h>
-#include <stddef.h>
+#include "xy_string.h"
+#include "xy_stdio.h"
+#include "xy_typedef.h"
 
 #define AT_DEBUG(ai, fmt, args...)                 \
     do                                             \
@@ -622,7 +622,7 @@ static void at_send_line(at_info_t *ai, const char *fmt, va_list args)
         AT_DEBUG(ai, "Malloc failed when send...\r\n");
         return;
     }
-    len = vsnprintf(cmdline, AT_MAX_CMD_LEN, fmt, args);
+    len = xy_vsnprintf(cmdline, AT_MAX_CMD_LEN, fmt, args);
     //Clear receive buffer.
     ai->recv_cnt = 0;
     ai->recvbuf[0] = '\0';
@@ -794,10 +794,13 @@ static void resp_recv_process(at_info_t *ai, const char *buf, unsigned int size)
 {
     if (size == 0)
         return;
+    /* Clamp size to leave room for trailing NUL */
+    if (size >= ai->recv_bufsize)
+        size = ai->recv_bufsize - 1;
     if (ai->recv_cnt + size >= ai->recv_bufsize) //Receive overflow, clear directly.
         ai->recv_cnt = 0;
 
-    memcpy(ai->recvbuf + ai->recv_cnt, buf, size);    
+    memcpy(ai->recvbuf + ai->recv_cnt, buf, size);
     ai->recv_cnt += size;
     ai->recvbuf[ai->recv_cnt] = '\0';
 }
@@ -987,7 +990,7 @@ bool at_exec_vcmd(at_obj_t *at, const at_attr_t *attr, const char *cmd, va_list 
         AT_DEBUG(obj_map(at), "No memory when execute vcmd...\r\n");
         return NULL;
     }
-    len = vsnprintf(buf, AT_MAX_CMD_LEN, cmd, va);
+    len = xy_vsnprintf(buf, AT_MAX_CMD_LEN, cmd, va);
     if (len > 0) {
         workid = add_work_item(obj_map(at), WORK_TYPE_CMD, attr, buf, len + 1);
     }
@@ -1261,7 +1264,7 @@ static void at_raw_trans_process(at_obj_t *obj)
             if (ai->recv_cnt >= ai->recv_bufsize)
                 ai->recv_cnt = 0;
             ai->recvbuf[ai->recv_cnt] = rbuf[i];
-            if (rbuf[i] == '\r' || rbuf[i] == 'n') {
+            if (rbuf[i] == '\r' || rbuf[i] == '\n') {
                 ai->recvbuf[ai->recv_cnt] = '\0';
                 ai->recv_cnt = 0;
                 if (strcasecmp(obj->raw_conf->exit_cmd, ai->recvbuf) != 0) {

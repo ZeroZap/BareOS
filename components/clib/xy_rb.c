@@ -4,9 +4,8 @@
  */
 
 #include "xy_rb.h"
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
+#include "xy_string.h"  /* memcpy → xy_memcpy via compat macros */
+#include "xy_mem.h"     /* xy_malloc, xy_free */
 
 /**
  * @brief Initialize a ring buffer
@@ -261,7 +260,11 @@ size_t xy_rb_get(xy_rb_t *rb, uint8_t *ptr, uint32_t length)
 }
 
 /**
- * @brief Peek data from the ring buffer without changing read index
+ * @brief Peek data from the ring buffer without changing read index.
+ *
+ * Returns the number of contiguous bytes available starting at *ptr.
+ * If the data wraps around the end of the backing buffer the caller must
+ * call xy_rb_peek() again after consuming this segment.
  */
 size_t xy_rb_peek(xy_rb_t *rb, uint8_t **ptr)
 {
@@ -270,17 +273,13 @@ size_t xy_rb_peek(xy_rb_t *rb, uint8_t **ptr)
 
     *ptr = &rb->buffer_ptr[rb->read_index];
 
-    if (rb->read_index > rb->write_index) {
-        if (rb->read_mirror == rb->write_mirror)
-            return rb->buffer_size - rb->read_index;
-        else
-            return rb->buffer_size - rb->read_index;
-    } else {
-        if (rb->read_mirror == rb->write_mirror)
-            return rb->write_index - rb->read_index;
-        else
-            return rb->buffer_size - rb->read_index;
-    }
+    /* Same mirror with read <= write: contiguous run = write - read.
+     * Otherwise (different mirror, or read > write in same mirror which is
+     * an unreachable transient state) the contiguous run ends at the
+     * buffer boundary. */
+    if (rb->read_mirror == rb->write_mirror && rb->read_index <= rb->write_index)
+        return rb->write_index - rb->read_index;
+    return rb->buffer_size - rb->read_index;
 }
 
 /**
@@ -316,13 +315,13 @@ xy_rb_t *xy_rb_create(uint32_t length)
     if (length == 0)
         return NULL;
 
-    xy_rb_t *rb = (xy_rb_t *)malloc(sizeof(xy_rb_t));
+    xy_rb_t *rb = (xy_rb_t *)xy_malloc(sizeof(xy_rb_t));
     if (!rb)
         return NULL;
 
-    uint8_t *pool = (uint8_t *)malloc(length);
+    uint8_t *pool = (uint8_t *)xy_malloc(length);
     if (!pool) {
-        free(rb);
+        xy_free(rb);
         return NULL;
     }
 
@@ -340,7 +339,7 @@ void xy_rb_destroy(xy_rb_t *rb)
         return;
 
     if (rb->buffer_ptr)
-        free(rb->buffer_ptr);
+        xy_free(rb->buffer_ptr);
 
-    free(rb);
+    xy_free(rb);
 }

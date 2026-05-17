@@ -1,18 +1,13 @@
 #include "xy_dsc.h"
-#include <string.h>
+#include "xy_string.h"
+#include "xy_ctype.h"
 
 /* -----------------------------------------------------------------------
  * Internal helpers
  * ----------------------------------------------------------------------- */
 
-/* Return ASCII hex digit value, or 0xFF on non-hex. */
-static uint8_t hex_val(char c)
-{
-    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
-    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
-    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
-    return 0xFFu;
-}
+/* ASCII hex digit value, or 0xFF on non-hex (shared via xy_ctype). */
+#define hex_val(c)  xy_xdigit_val((int8_t)(c))
 
 /* Validate NMEA XOR checksum.  sentence points to '$'.
  * Returns true if checksum matches or sentence has no '*'. */

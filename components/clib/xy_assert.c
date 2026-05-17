@@ -6,10 +6,21 @@
  */
 
 #include "xy_assert.h"
-#include <stdio.h>
+#include "xy_stdio.h"
 
 /* Global assertion handler */
 static xy_assert_handler_t g_assert_handler = NULL;
+
+/**
+ * BSP-overridable hook called immediately before xy_assert_default_handler
+ * enters its halt loop. Override to flush logs, save crash dump, kick
+ * a watchdog reset, blink an LED, etc.
+ */
+#if defined(__GNUC__)
+__attribute__((weak)) void xy_assert_before_halt(void) { }
+#else
+void xy_assert_before_halt(void);
+#endif
 
 void xy_assert_set_handler(xy_assert_handler_t handler)
 {
@@ -18,8 +29,9 @@ void xy_assert_set_handler(xy_assert_handler_t handler)
 
 void xy_assert_default_handler(const char *file, int line, const char *expr)
 {
-    printf("Assertion failed: %s, file %s, line %d\n", expr, file, line);
-    
+    xy_printf("Assertion failed: %s, file %s, line %d\n", expr, file, line);
+    xy_assert_before_halt();
+
     /* Default behavior: halt execution */
     while(1) {
         /* Infinite loop to halt execution */
@@ -55,7 +67,8 @@ void xy_assert_with_msg(int expr, const char *msg)
         if (g_assert_handler) {
             g_assert_handler(__FILE__, __LINE__, msg);
         } else {
-            printf("Assertion failed: %s\n", msg);
+            xy_printf("Assertion failed: %s\n", msg);
+            xy_assert_before_halt();
             while(1) {
                 /* Halt execution */
             }

@@ -15,6 +15,7 @@ uint8_t xy_isprint(int8_t c);
 uint8_t xy_ispunct(int8_t c);
 uint8_t xy_isspace(int8_t c);
 uint8_t xy_isxdigit(int8_t c);
+uint8_t xy_xdigit_val(int8_t c);   /* 0..15, or 0xFF if not hex */
 uint8_t xy_tolower(int8_t c);
 uint8_t xy_toupper(int8_t c);
 uint8_t xy_isascii(int8_t c);

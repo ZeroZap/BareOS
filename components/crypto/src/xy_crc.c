@@ -65,11 +65,34 @@ uint64_t xy_crc_calc_table(const xy_crc_cfg_t *cfg, const uint64_t *table,
     uint64_t mask =
         (cfg->width < 64) ? ((1ULL << cfg->width) - 1) : 0xFFFFFFFFFFFFFFFFULL;
 
-    while (length--) {
-        uint8_t byte = *data++;
-        if (cfg->ref_in)
-            byte = reflect8(byte);
-        crc = table[(uint8_t)(crc ^ byte)] & mask;
+    /* Standard byte-at-a-time table-driven CRC.
+     * For widths >= 8: index is top-byte-of-crc XOR data byte; result is
+     * (crc << 8) XOR table[index].
+     * For widths < 8: collapse to bit-shift on aligned crc. */
+    if (cfg->width >= 8u) {
+        uint8_t shift = (uint8_t)(cfg->width - 8u);
+        while (length--) {
+            uint8_t byte = *data++;
+            if (cfg->ref_in)
+                byte = reflect8(byte);
+            uint8_t idx = (uint8_t)((crc >> shift) ^ byte);
+            crc = ((crc << 8) ^ table[idx]) & mask;
+        }
+    } else {
+        /* Fallback for sub-byte widths — table lookup not meaningful */
+        while (length--) {
+            uint8_t byte = *data++;
+            if (cfg->ref_in)
+                byte = reflect8(byte);
+            crc ^= ((uint64_t)byte << (cfg->width - 1u));
+            for (uint8_t i = 0; i < 8u; i++) {
+                if (crc & (1ULL << (cfg->width - 1u)))
+                    crc = (crc << 1) ^ cfg->polynomial;
+                else
+                    crc <<= 1;
+                crc &= mask;
+            }
+        }
     }
 
     if (cfg->ref_out)

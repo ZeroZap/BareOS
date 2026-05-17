@@ -25,7 +25,7 @@ uint8_t xy_isupper(int8_t c)
  */
 uint8_t xy_isalpha(int8_t c)
 {
-    return ((('a' <= (c)) && ('z' >= (c))) || ('A' <= (c)) && ('Z' >= (c)));
+    return (uint8_t)((('a' <= c) && (c <= 'z')) || (('A' <= c) && (c <= 'Z')));
 }
 
 uint8_t xy_isdigit(int8_t c)
@@ -42,8 +42,9 @@ uint8_t xy_isdigit(int8_t c)
  */
 uint8_t xy_isalnum(int8_t c)
 {
-    return ((('a' <= (c)) && ('z' >= (c))) || ('A' <= (c)) && ('Z' >= (c))
-            || ('0' <= (c)) && ('9' >= (c)));
+    return (uint8_t)((('a' <= c) && (c <= 'z'))
+                  || (('A' <= c) && (c <= 'Z'))
+                  || (('0' <= c) && (c <= '9')));
 }
 
 /**
@@ -55,7 +56,10 @@ uint8_t xy_isalnum(int8_t c)
  */
 uint8_t xy_isgraph(int8_t c)
 {
-    return ((33 <= (c)) && (127 >= (c)));
+    /* int8_t range is -128..127; treat input as unsigned to handle 127 case
+     * (warning -Wtype-limits about "127 >= c" always true). */
+    uint8_t u = (uint8_t)c;
+    return (uint8_t)((u >= 33u) && (u <= 126u));
 }
 
 /**
@@ -100,4 +104,32 @@ uint8_t xy_iscntrl(int8_t c)
 uint8_t xy_isnull(int8_t c)
 {
     return (c);
+}
+
+uint8_t xy_isxdigit(int8_t c)
+{
+    return (uint8_t)((('0' <= c) && (c <= '9'))
+                  || (('A' <= c) && (c <= 'F'))
+                  || (('a' <= c) && (c <= 'f')));
+}
+
+/**
+ * @brief 将 hex 字符转为 0..15 的 nibble 值；非 hex 字符返回 0xFF。
+ */
+uint8_t xy_xdigit_val(int8_t c)
+{
+    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
+    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
+    return 0xFFu;
+}
+
+uint8_t xy_tolower(int8_t c)
+{
+    return (uint8_t)(xy_isupper(c) ? (c + ('a' - 'A')) : c);
+}
+
+uint8_t xy_toupper(int8_t c)
+{
+    return (uint8_t)(xy_islower(c) ? (c - ('a' - 'A')) : c);
 }

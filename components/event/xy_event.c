@@ -13,7 +13,7 @@
  */
 
 #include "xy_event.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Queue slot ─────────────────────────────────────────────────────── */
 
@@ -37,11 +37,27 @@ typedef char _evt_pow2_check[(((XY_EVENT_QUEUE_DEPTH) & (XY_EVENT_QUEUE_DEPTH - 
 
 static xy_event_handler_t s_handlers[XY_EVENT_MAX_ID][XY_EVENT_MAX_HANDLERS];
 
+/* ── BSP-overridable critical section (default: no-op) ──────────────── */
+
+#if defined(__GNUC__)
+__attribute__((weak)) void xy_event_lock(void)   { }
+__attribute__((weak)) void xy_event_unlock(void) { }
+#else
+/* For non-GCC toolchains the BSP must provide strong definitions of these. */
+void xy_event_lock(void);
+void xy_event_unlock(void);
+#endif
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 int xy_event_subscribe(xy_event_id_t ev_id, xy_event_handler_t handler)
 {
     if (ev_id >= XY_EVENT_MAX_ID || !handler) return -1;
+    /* First pass: reject if already registered (avoid double-dispatch). */
+    for (uint32_t i = 0; i < XY_EVENT_MAX_HANDLERS; i++) {
+        if (s_handlers[ev_id][i] == handler) return 0;
+    }
+    /* Second pass: install in first empty slot. */
     for (uint32_t i = 0; i < XY_EVENT_MAX_HANDLERS; i++) {
         if (!s_handlers[ev_id][i]) {
             s_handlers[ev_id][i] = handler;
@@ -65,19 +81,23 @@ int xy_event_unsubscribe(xy_event_id_t ev_id, xy_event_handler_t handler)
 
 int xy_event_post(xy_event_id_t ev_id, void *data)
 {
-    uint32_t head = s_head;
-    uint32_t next = (head + 1u) & ~0u; /* increment without masking yet */
+    int      rc = 0;
+    uint32_t head;
+    uint32_t next;
 
+    xy_event_lock();          /* No-op unless BSP overrides for multi-producer. */
+    head = s_head;
+    next = head + 1u;
     if ((next - s_tail) > QUEUE_MASK) {
-        return -1; /* queue full */
+        rc = -1;              /* queue full */
+    } else {
+        s_queue[head & QUEUE_MASK].ev_id = ev_id;
+        s_queue[head & QUEUE_MASK].data  = data;
+        /* Publish: the increment makes the slot visible to the consumer */
+        s_head = next;
     }
-
-    s_queue[head & QUEUE_MASK].ev_id = ev_id;
-    s_queue[head & QUEUE_MASK].data  = data;
-
-    /* Publish: the increment makes the slot visible to the consumer */
-    s_head = next;
-    return 0;
+    xy_event_unlock();
+    return rc;
 }
 
 int xy_event_dispatch(void)

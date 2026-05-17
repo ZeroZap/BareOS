@@ -34,6 +34,13 @@ void xy_assert_set_handler(xy_assert_handler_t handler);
 void xy_assert_default_handler(const char *file, int line, const char *expr);
 
 /**
+ * @brief BSP-overridable hook invoked before the default assert handler
+ *        enters its halt loop. Use to flush logs, save crash dump, kick
+ *        the watchdog into a forced reset, etc. Default is a no-op.
+ */
+void xy_assert_before_halt(void);
+
+/**
  * @brief Assertion macro
  * @param expr Expression to evaluate
  */

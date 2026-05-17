@@ -29,7 +29,7 @@
 #define XY_EVENT_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,13 +84,30 @@ int xy_event_unsubscribe(xy_event_id_t ev_id, xy_event_handler_t handler);
 
 /**
  * Post event @ev_id with optional payload pointer @data.
- * ISR-safe: uses atomic index update on the ring queue.
+ *
+ * Single-producer / single-consumer: safe with one ISR posting while the
+ * main loop dispatches. No critical section is taken.
+ *
+ * Multi-producer (more than one ISR posting concurrently): the BSP must
+ * override xy_event_lock() / xy_event_unlock() to disable / restore IRQs
+ * around the slot reservation. Default implementations are no-ops.
+ *
  * Returns 0 on success, -1 if queue is full (event dropped).
  *
  * @note @data pointer is NOT copied; it must remain valid until
  *       xy_event_dispatch() calls the handler.
  */
 int xy_event_post(xy_event_id_t ev_id, void *data);
+
+/**
+ * BSP-overridable critical-section hooks. Override (non-weak strong def)
+ * to enable multi-producer post safety:
+ *   void xy_event_lock(void)   { __disable_irq();   }
+ *   void xy_event_unlock(void) { __enable_irq();    }
+ * The defaults are no-ops, preserving single-producer behavior.
+ */
+void xy_event_lock(void);
+void xy_event_unlock(void);
 
 /**
  * Dispatch all pending events from the queue.

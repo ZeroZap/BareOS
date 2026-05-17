@@ -1,18 +1,14 @@
 #include "xy_epirb.h"
 #include "xy_stdio.h"
-#include <string.h>
+#include "xy_string.h"
+#include "xy_ctype.h"
 
 /* -----------------------------------------------------------------------
  * Internal helpers
  * ----------------------------------------------------------------------- */
 
-static uint8_t hex_nibble(char c)
-{
-    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
-    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10u);
-    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10u);
-    return 0xFFu;
-}
+/* Shared hex nibble parser (0..15, 0xFF on invalid). */
+#define hex_nibble(c)  xy_xdigit_val((int8_t)(c))
 
 /* -----------------------------------------------------------------------
  * epirb_getbits

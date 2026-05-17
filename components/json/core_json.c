@@ -27,8 +27,7 @@
  * @brief The source file that implements the user-facing functions in core_json.h.
  */
 
-#include <limits.h>
-#include <stddef.h>
+#include "xy_typedef.h"
 #include <stdint.h>
 #include "core_json.h"
 

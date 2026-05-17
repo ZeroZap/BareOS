@@ -17,8 +17,7 @@
 #define _ATS_H_
 
 #include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 #include <stdarg.h>
 
 // Hash table for command mapping
@@ -364,16 +363,9 @@ int at_server_print_result(at_server_t *server, at_result_t result);
  */
 size_t at_server_send(at_server_t *server, const char *data, size_t len);
 
-/**
- * @brief Receive data with timeout
- * @param server Pointer to server
- * @param data Data buffer
- * @param len Maximum length
- * @param timeout Timeout in milliseconds
- * @return Number of bytes received
- */
-size_t at_server_recv(at_server_t *server, char *data, size_t len,
-                      uint32_t timeout);
+/* Note: there is no `at_server_recv()` — the bare-metal AT server is
+ * driven by per-byte ISR feeds via at_server_feed_byte(). A blocking
+ * recv-with-timeout would require an RTOS. */
 
 /* ==================== Parameter Parsing ==================== */
 

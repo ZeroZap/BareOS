@@ -27,7 +27,7 @@
 #define _AT_CHAT_H_
 
 #include "at_port.h"
-#include <stdbool.h>
+#include "xy_typedef.h"
 #include <stdarg.h>
 
 struct at_obj;                      
@@ -342,6 +342,20 @@ void at_raw_transport_enter(at_obj_t *obj, const at_raw_trans_conf_t *conf);
 
 void at_raw_transport_exit(at_obj_t *obj);
 #endif //End of AT_RAW_TRANSPARENT_EN
+
+/* ── Async-op helper macros (shared by cell/wifi drivers) ─────────────────
+ * For use inside work handlers that complete an async operation.
+ * The op struct must contain `done` (bool) and `code` (at_resp_code) fields.
+ *
+ *   AT_OP_OK(op, env)  — mark op succeeded and end the work item
+ *   AT_OP_ERR(op, env) — mark op failed and end the work item
+ */
+#define AT_OP_OK(op, env)  do { (op)->code = AT_RESP_OK;    \
+                                (op)->done = true;          \
+                                (env)->finish((env), AT_RESP_OK);    } while (0)
+#define AT_OP_ERR(op, env) do { (op)->code = AT_RESP_ERROR; \
+                                (op)->done = true;          \
+                                (env)->finish((env), AT_RESP_ERROR); } while (0)
 
 #endif //End of _AT_CHAT_H_
 

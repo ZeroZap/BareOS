@@ -3,7 +3,8 @@
  */
 
 #include "xy_nmea.h"
-#include <string.h>
+#include "xy_string.h"
+#include "xy_ctype.h"
 
 /* ── FSM states ───────────────────────────────────────────────────── */
 
@@ -14,13 +15,8 @@
 
 /* ── Internal helpers ─────────────────────────────────────────────── */
 
-static uint8_t hex_val(uint8_t c)
-{
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return 0xFF; // invalid
-}
+/* Shared hex nibble parser (0..15, 0xFF on invalid). */
+#define hex_val(c)  xy_xdigit_val((int8_t)(c))
 
 /*
  * Copy the n-th comma-delimited field (0 = sentence tag, 1 = first data field)

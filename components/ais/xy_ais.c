@@ -11,7 +11,8 @@
  */
 
 #include "xy_ais.h"
-#include <string.h>
+#include "xy_string.h"
+#include "xy_ctype.h"
 
 /* ── Internal limits ─────────────────────────────────────────────────── */
 
@@ -20,19 +21,15 @@
  * Two sentences of 56 chars = 112 chars total — enough for all types. */
 #define AIS_MAX_ASSEMBLED_PAYLOAD (AIS_PAYLOAD_MAX * 2u)  /* 112 chars */
 
+/* Maximum bit position any decoder may request — used as a defensive cap
+ * inside the bit-extraction primitives so a truncated/malformed assembled
+ * payload cannot trigger an out-of-bounds read of the slot buffer. */
+#define AIS_MAX_BIT_INDEX  (AIS_MAX_ASSEMBLED_PAYLOAD * 6u)  /* 672 bits */
+
 /* ── Internal helpers ────────────────────────────────────────────────── */
 
-/*
- * Convert a single hex character to its nibble value.
- * Returns 0xFF on invalid input.
- */
-static uint8_t _hex_nibble(char c)
-{
-    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
-    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
-    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
-    return 0xFFu;
-}
+/* Hex nibble parse: use shared xy_xdigit_val (0..15 / 0xFF on invalid). */
+#define _hex_nibble(c)  xy_xdigit_val((int8_t)(c))
 
 /*
  * Locate the n-th comma-separated field pointer within a raw NMEA sentence
@@ -152,8 +149,12 @@ uint32_t ais_getbits(const uint8_t *payload, uint16_t bit_offset,
 {
     uint32_t result = 0;
     for (uint8_t i = 0; i < bit_count; i++) {
-        uint16_t char_idx = (uint16_t)((bit_offset + i) / 6u);
-        uint8_t  bit_pos  = (uint8_t)(5u - ((bit_offset + i) % 6u));
+        uint16_t abs_bit  = (uint16_t)(bit_offset + i);
+        /* Defensive: refuse to read past the largest assembled payload size.
+         * Truncated multi-part messages can otherwise read garbage. */
+        if (abs_bit >= AIS_MAX_BIT_INDEX) return result;
+        uint16_t char_idx = (uint16_t)(abs_bit / 6u);
+        uint8_t  bit_pos  = (uint8_t)(5u - (abs_bit % 6u));
         result = (result << 1) | ((payload[char_idx] >> bit_pos) & 1u);
     }
     return result;
@@ -163,6 +164,11 @@ int32_t ais_getbits_signed(const uint8_t *payload, uint16_t bit_offset,
                             uint8_t bit_count)
 {
     uint32_t v = ais_getbits(payload, bit_offset, bit_count);
+    /* When bit_count == 32 the value already fills the result; sign-extension
+     * via `1u << 32` would be undefined behavior. Skip it. */
+    if (bit_count == 0u || bit_count >= 32u) {
+        return (int32_t)v;
+    }
     /* Sign-extend: if the MSB of the field is set, fill upper bits with 1s */
     if (v & (1u << (bit_count - 1u))) {
         v |= ~((1u << bit_count) - 1u);
