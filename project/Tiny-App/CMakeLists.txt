@@ -4,6 +4,10 @@ project(bareos_pc C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Enable CTest. Tests are registered with add_test() at the bottom of this file.
+# Run with: cd build && ctest --output-on-failure
+enable_testing()
+
 # ── Compiler flags ────────────────────────────────────────────────────
 if(MSVC)
     add_compile_options(/W3)
@@ -176,3 +180,19 @@ if(WIN32)
 else()
     target_compile_options(bareos_tests PRIVATE -Wno-unused-function)
 endif()
+
+# ── CTest registration ────────────────────────────────────────────────
+# One wholesale test runs every case in the suite; failure count is
+# propagated via the binary's exit code. Per-case granularity is available
+# manually with `./bareos_tests --filter=<substring>` or `--list`.
+#
+# Usage:
+#   cd build && ctest --output-on-failure
+#   cd build && ctest -R bareos_tests_all -V          # verbose output
+#   ./build/bareos_tests --list                       # list case names
+#   ./build/bareos_tests --filter=CRC                 # run subset
+add_test(NAME bareos_tests_all COMMAND bareos_tests)
+set_tests_properties(bareos_tests_all PROPERTIES
+    LABELS  "regression"
+    TIMEOUT 30
+)

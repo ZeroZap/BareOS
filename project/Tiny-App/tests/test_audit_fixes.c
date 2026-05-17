@@ -21,6 +21,8 @@
 int g_test_failures = 0;
 int g_test_count    = 0;
 const char *g_test_current_name = NULL;
+const char *g_test_filter       = NULL;
+int g_test_list_only            = 0;
 
 /* ── P0-C: AIS sign-extend at bit_count == 32 ──────────────────────────── */
 
@@ -241,14 +243,42 @@ static void test_urc_recv_split(void)
 
 /* ── Main entry ────────────────────────────────────────────────────────── */
 
-int main(void)
+static void print_usage(const char *prog)
 {
-    fprintf(stderr, "==== BareOS audit-fix regression suite ====\n");
+    fprintf(stderr,
+        "usage: %s [--list] [--filter=SUBSTR]\n"
+        "  --list             Print test case names and exit.\n"
+        "  --filter=SUBSTR    Run only cases whose name contains SUBSTR.\n",
+        prog);
+}
+
+int main(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--list") == 0) {
+            g_test_list_only = 1;
+        } else if (strncmp(argv[i], "--filter=", 9) == 0) {
+            g_test_filter = argv[i] + 9;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else {
+            fprintf(stderr, "unknown option: %s\n", argv[i]);
+            print_usage(argv[0]);
+            return 2;
+        }
+    }
+
+    if (!g_test_list_only)
+        fprintf(stderr, "==== BareOS audit-fix regression suite ====\n");
 
     test_ais_sign_extend();
     test_crc_table_widths();
     test_xdigit();
     test_urc_recv_split();
+
+    if (g_test_list_only)
+        return 0;
 
     fprintf(stderr, "==== %d tests, %d failures ====\n",
             g_test_count, g_test_failures);

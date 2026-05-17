@@ -18,13 +18,24 @@
 extern int g_test_failures;
 extern int g_test_count;
 extern const char *g_test_current_name;
+extern const char *g_test_filter;   /* NULL = run all; else substring match */
+extern int g_test_list_only;        /* 1 = print names, do not execute */
 
-#define TEST_CASE(name)                                                       \
-    for (g_test_current_name = (name),                                        \
-         g_test_count++,                                                       \
-         fprintf(stderr, "[ RUN  ] %s\n", g_test_current_name);                \
+/* TEST_CASE skips execution unless name matches the filter (or no filter set).
+ * In --list mode it prints the name and skips the body. */
+#define TEST_CASE(name)                                                        \
+    for (g_test_current_name = (name);                                         \
          g_test_current_name != NULL;                                          \
-         g_test_current_name = NULL)
+         g_test_current_name = NULL)                                           \
+        if (g_test_list_only) {                                                \
+            fprintf(stdout, "%s\n", g_test_current_name);                      \
+            continue;                                                          \
+        } else if (g_test_filter == NULL                                       \
+                || strstr(g_test_current_name, g_test_filter) != NULL)         \
+            for (int _once = (g_test_count++,                                  \
+                              fprintf(stderr, "[ RUN  ] %s\n",                 \
+                                      g_test_current_name), 1);                \
+                 _once; _once = 0)
 
 #define TEST_FAIL_(fmt, ...)                                                   \
     do {                                                                       \
