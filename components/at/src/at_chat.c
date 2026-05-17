@@ -1326,6 +1326,61 @@ void at_obj_process(at_obj_t *at)
 }
 
 /**
+ * @brief Three-step prompt-then-write helper. See header for contract.
+ *
+ * Caller layout (canonical):
+ *   case 0:  env->println(env, "AT+...=%d,%d", ...);
+ *            env->reset_timer(env);
+ *            env->state = 1;
+ *            break;
+ *   default: {
+ *       int rc = at_prompt_send_step(env, data, len,
+ *                                    "SEND OK", "OK", "SEND FAIL",
+ *                                    5000, 10000);
+ *       if      (rc > 0) AT_OP_OK(op, env);
+ *       else if (rc < 0) AT_OP_ERR(op, env);
+ *   }
+ */
+int at_prompt_send_step(at_env_t *env,
+                        const void *data, unsigned int data_len,
+                        const char *ok1, const char *ok2,
+                        const char *err_keyword,
+                        unsigned int prompt_timeout_ms,
+                        unsigned int resp_timeout_ms)
+{
+    if (env == NULL || ok1 == NULL) return -1;
+
+    switch (env->state) {
+    case 1:
+        if (env->contains(env, ">")) {
+            env->obj->adap->write(data, data_len);
+            env->recvclr(env);
+            env->reset_timer(env);
+            env->state = 2;
+        } else if (env->is_timeout(env, prompt_timeout_ms)) {
+            return -1;
+        }
+        break;
+
+    case 2:
+        if (env->contains(env, ok1) || (ok2 && env->contains(env, ok2))) {
+            return 1;
+        }
+        if ((err_keyword && env->contains(env, err_keyword)) ||
+            env->contains(env, "ERROR") ||
+            env->is_timeout(env, resp_timeout_ms)) {
+            return -1;
+        }
+        break;
+
+    default:
+        /* state 0 is the caller's responsibility; anything else is a bug. */
+        return -1;
+    }
+    return 0;
+}
+
+/**
  * @brief Two-phase URC binary payload accumulator. See header for contract.
  */
 int at_urc_recv_split(at_urc_info_t *info,

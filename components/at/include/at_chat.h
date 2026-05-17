@@ -386,6 +386,37 @@ int at_urc_recv_split(at_urc_info_t *info,
                       const char **out_payload,
                       int *out_payload_len);
 
+/* ── Prompt-then-write helper (shared by cell/wifi sock_send/mqtt_pub) ────
+ *
+ * Many modems frame raw-payload writes as a three-step exchange:
+ *
+ *   tx:  "AT+CIPSEND=<id>,<len>\r\n"          (state 0, caller does this)
+ *   rx:  ">"                                  (state 1)
+ *   tx:  <len bytes binary>                   (state 1 continued)
+ *   rx:  "SEND OK" | "DATA ACCEPT" | "OK"     (state 2)
+ *
+ * Variations:
+ *   - SIM76:   prompt='>', ok={"DATA ACCEPT","OK"}
+ *   - EC2x:    prompt='>', ok={"SEND OK","OK"}
+ *   - Fibocom: prompt='>', ok={",OK","OK"}
+ *   - WiFi:    prompt='>', ok={"SEND OK"}, err={"SEND FAIL"}
+ *
+ * at_prompt_send_step() encapsulates states 1+2. The caller's work
+ * handler still owns state 0 (the println framing) and the op_t code/done
+ * bookkeeping via AT_OP_OK / AT_OP_ERR.
+ *
+ * Returns:
+ *   +1 — operation succeeded; caller should AT_OP_OK(op, env)
+ *   -1 — operation failed;    caller should AT_OP_ERR(op, env)
+ *    0 — still in progress;   caller returns 0 to let the framework re-poll
+ */
+int at_prompt_send_step(at_env_t *env,
+                        const void *data, unsigned int data_len,
+                        const char *ok1, const char *ok2,
+                        const char *err_keyword,
+                        unsigned int prompt_timeout_ms,
+                        unsigned int resp_timeout_ms);
+
 /* ── Async-op helper macros (shared by cell/wifi drivers) ─────────────────
  * For use inside work handlers that complete an async operation.
  * The op struct must contain `done` (bool) and `code` (at_resp_code) fields.

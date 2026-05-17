@@ -251,32 +251,19 @@ static int work_sock_open(at_env_t *env)
 static int work_sock_send(at_env_t *env)
 {
     xy_cell_op_t *op = (xy_cell_op_t *)env->params;
-    switch (env->state) {
-    case 0:
+    if (env->state == 0) {
         env->println(env, "AT+CIPSEND=%d,%d",
                      op->sock_send.id, (int)op->sock_send.len);
         env->reset_timer(env);
         env->state = 1;
-        break;
-    case 1:
-        if (env->contains(env, ">")) {
-            env->obj->adap->write(op->sock_send.data,
-                                  (unsigned int)op->sock_send.len);
-            env->recvclr(env);
-            env->reset_timer(env);
-            env->state = 2;
-        } else if (env->is_timeout(env, 5000)) {
-            OP_ERR(op, env);
-        }
-        break;
-    case 2:
-        if (env->contains(env, "DATA ACCEPT") || env->contains(env, "OK")) {
-            OP_OK(op, env);
-        } else if (env->contains(env, "ERROR") || env->is_timeout(env, 10000)) {
-            OP_ERR(op, env);
-        }
-        break;
+        return 0;
     }
+    int rc = at_prompt_send_step(env,
+                                 op->sock_send.data, op->sock_send.len,
+                                 "DATA ACCEPT", "OK", NULL,
+                                 5000, 10000);
+    if      (rc > 0) OP_OK(op, env);
+    else if (rc < 0) OP_ERR(op, env);
     return 0;
 }
 

@@ -241,6 +241,117 @@ static void test_urc_recv_split(void)
     }
 }
 
+/* ── Sprint 4: at_prompt_send_step state machine ───────────────────────── */
+
+/* Fake adapter to record the raw bytes written during the prompt sequence */
+static uint8_t s_fake_write_buf[64];
+static unsigned s_fake_write_len = 0;
+static unsigned int fake_write(const void *data, unsigned int len)
+{
+    if (len > sizeof(s_fake_write_buf)) len = sizeof(s_fake_write_buf);
+    memcpy(s_fake_write_buf, data, len);
+    s_fake_write_len = len;
+    return len;
+}
+static unsigned int fake_read(void *data, unsigned int len)
+{ (void)data; (void)len; return 0; }
+
+static at_adapter_t s_fake_adap = {
+    .lock = NULL, .unlock = NULL,
+    .write = fake_write, .read = fake_read,
+};
+
+/* Fake at_env_t that just returns programmable values */
+static char *s_recv_inject = "";
+static int   s_state_done  = 0;
+
+static char *fake_contains(at_env_t *e, const char *s)
+{ (void)e; return strstr(s_recv_inject, s); }
+static bool fake_is_timeout(at_env_t *e, unsigned int ms)
+{ (void)e; (void)ms; return false; }
+static void fake_println(at_env_t *e, const char *fmt, ...) { (void)e; (void)fmt; }
+static void fake_recvclr(at_env_t *e) { (void)e; s_recv_inject = ""; }
+static void fake_reset_timer(at_env_t *e) { (void)e; }
+static void fake_finish(at_env_t *e, at_resp_code c)
+{ (void)e; (void)c; s_state_done = 1; }
+
+static void test_prompt_send_step(void)
+{
+    /* Minimal fake obj/env enough for at_prompt_send_step to call write() */
+    static at_obj_t fake_obj;
+    fake_obj.adap = &s_fake_adap;
+
+    at_env_t env = {0};
+    env.obj          = &fake_obj;
+    env.contains     = fake_contains;
+    env.is_timeout   = fake_is_timeout;
+    env.println      = fake_println;
+    env.recvclr      = fake_recvclr;
+    env.reset_timer  = fake_reset_timer;
+    env.finish       = fake_finish;
+
+    TEST_CASE("Sprint4: prompt_send_step state 1 sees '>' then writes payload") {
+        env.state = 1;
+        s_recv_inject = "x > y";
+        s_fake_write_len = 0;
+        int rc = at_prompt_send_step(&env, "HELLO", 5, "OK", NULL, NULL,
+                                     5000, 10000);
+        TEST_EQ(rc, 0);                 /* still running */
+        TEST_EQ(env.state, 2);          /* advanced */
+        TEST_EQ(s_fake_write_len, 5);
+        TEST_MEM_EQ(s_fake_write_buf, "HELLO", 5);
+    }
+
+    TEST_CASE("Sprint4: prompt_send_step state 2 matches ok1") {
+        env.state = 2;
+        s_recv_inject = "ok blah SEND OK\r\n";
+        int rc = at_prompt_send_step(&env, NULL, 0, "SEND OK", NULL, NULL,
+                                     5000, 10000);
+        TEST_EQ(rc, 1);
+    }
+
+    TEST_CASE("Sprint4: prompt_send_step state 2 matches ok2") {
+        env.state = 2;
+        s_recv_inject = "DATA ACCEPT 5\r\n";
+        int rc = at_prompt_send_step(&env, NULL, 0, "SEND OK", "DATA ACCEPT",
+                                     NULL, 5000, 10000);
+        TEST_EQ(rc, 1);
+    }
+
+    TEST_CASE("Sprint4: prompt_send_step state 2 explicit error keyword") {
+        env.state = 2;
+        s_recv_inject = "SEND FAIL\r\n";
+        int rc = at_prompt_send_step(&env, NULL, 0, "SEND OK", NULL,
+                                     "SEND FAIL", 5000, 10000);
+        TEST_EQ(rc, -1);
+    }
+
+    TEST_CASE("Sprint4: prompt_send_step state 2 generic ERROR") {
+        env.state = 2;
+        s_recv_inject = "ERROR\r\n";
+        int rc = at_prompt_send_step(&env, NULL, 0, "SEND OK", NULL, NULL,
+                                     5000, 10000);
+        TEST_EQ(rc, -1);
+    }
+
+    TEST_CASE("Sprint4: prompt_send_step rejects NULL env / NULL ok1") {
+        TEST_EQ(at_prompt_send_step(NULL, NULL, 0, "OK", NULL, NULL,
+                                    0, 0), -1);
+        env.state = 1;
+        TEST_EQ(at_prompt_send_step(&env, NULL, 0, NULL, NULL, NULL,
+                                    0, 0), -1);
+    }
+
+    TEST_CASE("Sprint4: prompt_send_step rejects unexpected state 0/3") {
+        env.state = 0;
+        TEST_EQ(at_prompt_send_step(&env, NULL, 0, "OK", NULL, NULL,
+                                    0, 0), -1);
+        env.state = 3;
+        TEST_EQ(at_prompt_send_step(&env, NULL, 0, "OK", NULL, NULL,
+                                    0, 0), -1);
+    }
+}
+
 /* ── Main entry ────────────────────────────────────────────────────────── */
 
 static void print_usage(const char *prog)
@@ -276,6 +387,7 @@ int main(int argc, char **argv)
     test_crc_table_widths();
     test_xdigit();
     test_urc_recv_split();
+    test_prompt_send_step();
 
     if (g_test_list_only)
         return 0;

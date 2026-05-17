@@ -221,35 +221,22 @@ static int work_sock_open(at_env_t *env)
 static int work_sock_send(at_env_t *env)
 {
     xy_cell_op_t *op = (xy_cell_op_t *)env->params;
-    const char   *cmd = op->sock_send.id < XY_CELL_SOCK_MAX &&
-                        g_cell_socks[op->sock_send.id].tls
-                        ? "AT+QSSLSEND" : "AT+QISEND";
-    switch (env->state) {
-    case 0:
+    if (env->state == 0) {
+        const char *cmd = (op->sock_send.id < XY_CELL_SOCK_MAX &&
+                           g_cell_socks[op->sock_send.id].tls)
+                          ? "AT+QSSLSEND" : "AT+QISEND";
         env->println(env, "%s=%d,%d", cmd,
                      op->sock_send.id, (int)op->sock_send.len);
         env->reset_timer(env);
         env->state = 1;
-        break;
-    case 1:
-        if (env->contains(env, ">")) {
-            env->obj->adap->write(op->sock_send.data,
-                                  (unsigned int)op->sock_send.len);
-            env->recvclr(env);
-            env->reset_timer(env);
-            env->state = 2;
-        } else if (env->is_timeout(env, 5000)) {
-            OP_ERR(op, env);
-        }
-        break;
-    case 2:
-        if (env->contains(env, "SEND OK") || env->contains(env, "OK")) {
-            OP_OK(op, env);
-        } else if (env->contains(env, "ERROR") || env->is_timeout(env, 10000)) {
-            OP_ERR(op, env);
-        }
-        break;
+        return 0;
     }
+    int rc = at_prompt_send_step(env,
+                                 op->sock_send.data, op->sock_send.len,
+                                 "SEND OK", "OK", NULL,
+                                 5000, 10000);
+    if      (rc > 0) OP_OK(op, env);
+    else if (rc < 0) OP_ERR(op, env);
     return 0;
 }
 
