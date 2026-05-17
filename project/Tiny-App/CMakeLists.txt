@@ -154,3 +154,25 @@ if(WIN32)
 else()
     target_compile_options(bareos_pc PRIVATE -Wno-unused-function)
 endif()
+
+# ── Regression test target ─────────────────────────────────────────────
+# Pins down audit-fix behavior and the at_urc_recv_split helper contract.
+# Run with: cmake --build build --target bareos_tests && ./build/bareos_tests
+set(TEST_SRCS
+    tests/test_audit_fixes.c
+    tests/test_bsp_stub.c
+)
+add_executable(bareos_tests ${COMP_SRCS} ${TEST_SRCS})
+target_include_directories(bareos_tests PRIVATE
+    ${INCDIRS}
+    tests
+)
+target_compile_definitions(bareos_tests PRIVATE
+    ${COMP_DEFS}
+    $<$<BOOL:${WIN32}>:__USE_MINGW_ANSI_STDIO=1>   # enable %lld on MinGW
+)
+if(WIN32)
+    target_link_libraries(bareos_tests PRIVATE crypt32)
+else()
+    target_compile_options(bareos_tests PRIVATE -Wno-unused-function)
+endif()
