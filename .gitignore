@@ -53,3 +53,18 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+compnents-ref/**
+
+# CMake build artifacts
+build/
+CMakeFiles/
+CMakeCache.txt
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+*.vcxproj
+*.vcxproj.filters
+*.sln
