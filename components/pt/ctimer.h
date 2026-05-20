@@ -25,7 +25,7 @@
 #define CTIMER_H
 
 #include "etimer.h"
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 #ifdef __cplusplus
 extern "C" {

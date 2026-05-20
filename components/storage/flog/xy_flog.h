@@ -57,7 +57,7 @@
 
 #include "xy_vlog.h"   /* xy_vlog_hdr_t, xy_vlog_type_t, XY_VLOG_HEADER_SIZE */
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 #include <stdarg.h>
 
 #ifdef __cplusplus

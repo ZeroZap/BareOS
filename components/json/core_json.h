@@ -30,9 +30,9 @@
 #ifndef CORE_JSON_H_
 #define CORE_JSON_H_
 
-#include <assert.h>
-#include <stdbool.h>
-#include <stddef.h>
+#include "xy_assert.h"
+#include "xy_typedef.h"
+#include "xy_typedef.h"
 
 /* *INDENT-OFF* */
 #ifdef __cplusplus

@@ -1,5 +1,5 @@
 #include "xy_uwb.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* -----------------------------------------------------------------------
  * CRC-16/CCITT  poly=0x1021  init=0x0000  no reflection

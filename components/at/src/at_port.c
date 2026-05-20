@@ -18,7 +18,7 @@
  */
 
 #include "../include/at_port.h"
-#include <stdlib.h>  /* malloc / free — replace with xy_mem pool if needed */
+#include "xy_mem.h"  /* xy_malloc / xy_free */
 
 /* ── millisecond counter provided by the BSP SysTick handler ─────── */
 extern volatile unsigned int g_sys_tick_ms;
@@ -27,12 +27,12 @@ extern volatile unsigned int g_sys_tick_ms;
 
 void *at_malloc(unsigned int nbytes)
 {
-    return malloc(nbytes);
+    return xy_malloc(nbytes);
 }
 
 void at_free(void *ptr)
 {
-    free(ptr);
+    xy_free(ptr);
 }
 
 /* ── Time ────────────────────────────────────────────────────────── */

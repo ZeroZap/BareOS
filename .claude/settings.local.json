@@ -1,7 +1,29 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(ls -la \"E:\\\\github_download\\\\_ZeroZap\\\\Maker\\\\BareOS\\\\components-ref\\\\net\\\\at\\\\AT-Command-V2\\\\src\\\\\" 2>/dev/null | grep -E '\\\\.\\(c|h\\)$')",
+      "Read(//e/github_download/_ZeroZap/Maker/BareOS/components-ref/net/at/AT-Command-V2/src\" 2>/dev/null | grep -E '/**)",
+      "Bash(xargs grep -l \"memory_pool\\\\|mem_pool\\\\|mempool\")",
+      "Bash(find /e/github_download/_ZeroZap/Maker -maxdepth 3 -type d -name \"*Kohler*\" -o -maxdepth 3 -type d -name \"*JV545*\" 2>/dev/null | head -20)",
+      "Read(//e/github_download/_ZeroZap/Maker/**)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(mkdir -p e:/github_download/_ZeroZap/Maker/BareOS/pc/src)",
+      "Bash(cmake -B build -G \"MinGW Makefiles\" -DCMAKE_BUILD_TYPE=Debug)",
+      "Bash(where gcc *)",
+      "Bash(where cmake *)",
+      "Bash(where make *)",
+      "Bash(where mingw32-make *)",
+      "Bash(cmake -B build -G \"Unix Makefiles\" -DCMAKE_C_COMPILER=\"C:/Users/86158/gcc/bin/gcc.exe\" -DCMAKE_MAKE_PROGRAM=\"C:/Users/86158/gcc/bin/make.exe\" -DCMAKE_BUILD_TYPE=Debug)",
+      "Bash(\"C:/Users/86158/gcc/bin/make.exe\" -C build -j4)",
+      "Bash(cat)",
+      "Bash(bash /tmp/file_check.sh)",
+      "Bash(\"C:/Users/86158/gcc/bin/make.exe\" -j4)"
+    ],
+    "additionalDirectories": [
+      "e:\\github_download\\_ZeroZap\\Maker\\BareOS\\pc"
     ]
   }
 }

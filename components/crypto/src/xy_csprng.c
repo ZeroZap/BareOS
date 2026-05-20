@@ -20,12 +20,10 @@
  * - Backtracking resistance with proper entropy mixing
  */
 
-#define LOCAL_LOG_LEVEL XY_LOG_LEVEL_INFO
-
 #include <stdint.h>
 #include "xy_rng.h"
-#include "../../trace/xy_log/inc/xy_log.h"
-#include "../../xy_clib/xy_string.h"
+#include "xy_log.h"
+#include "xy_string.h"
 
 /* ChaCha20 quarter round macro */
 #define QUARTERROUND(a, b, c, d) \
@@ -128,7 +126,7 @@ static void mix_entropy(const uint8_t *entropy, size_t len) {
 
 int xy_csprng_init(const uint8_t *seed, size_t seed_len) {
     if (!seed || seed_len < 32) {
-        xy_log_e("CSPRNG: Invalid seed (need at least 32 bytes)\n");
+        xy_log_e("CSPRNG: Invalid seed (need at least 32 bytes)");
         return XY_RNG_INVALID_PARAM;
     }
 
@@ -178,18 +176,18 @@ int xy_csprng_init(const uint8_t *seed, size_t seed_len) {
     g_csprng_ctx.bytes_generated = 0;
     g_csprng_ctx.initialized = 1;
 
-    xy_log_i("CSPRNG: Initialized with %zu bytes of seed\n", seed_len);
+    xy_log_i("CSPRNG: Initialized with %zu bytes of seed", seed_len);
     return XY_RNG_SUCCESS;
 }
 
 int xy_csprng_reseed(const uint8_t *entropy, size_t entropy_len) {
     if (!g_csprng_ctx.initialized) {
-        xy_log_w("CSPRNG: Not initialized, call xy_csprng_init() first\n");
+        xy_log_w("CSPRNG: Not initialized, call xy_csprng_init() first");
         return XY_RNG_NOT_INITIALIZED;
     }
 
     if (!entropy || entropy_len == 0) {
-        xy_log_w("CSPRNG: No entropy provided for reseed\n");
+        xy_log_w("CSPRNG: No entropy provided for reseed");
         return XY_RNG_INVALID_PARAM;
     }
 
@@ -205,7 +203,7 @@ int xy_csprng_reseed(const uint8_t *entropy, size_t entropy_len) {
     /* Discard buffer */
     g_csprng_ctx.available = 0;
 
-    xy_log_d("CSPRNG: Reseeded with %zu bytes of entropy\n", entropy_len);
+    xy_log_d("CSPRNG: Reseeded with %zu bytes of entropy", entropy_len);
     return XY_RNG_SUCCESS;
 }
 
@@ -215,7 +213,7 @@ int xy_csprng_generate(uint8_t *output, size_t output_len) {
     }
 
     if (!g_csprng_ctx.initialized) {
-        xy_log_e("CSPRNG: Not initialized\n");
+        xy_log_e("CSPRNG: Not initialized");
         return XY_RNG_NOT_INITIALIZED;
     }
 
@@ -236,7 +234,7 @@ int xy_csprng_generate(uint8_t *output, size_t output_len) {
     while (bytes_written < output_len) {
         /* Check if reseed is needed (every 1 MB) */
         if (g_csprng_ctx.bytes_generated >= (1024 * 1024)) {
-            xy_log_w("CSPRNG: Automatic reseed recommended after 1 MB\n");
+            xy_log_w("CSPRNG: Automatic reseed recommended after 1 MB");
             /* In production, should automatically reseed from hardware RNG */
         }
 
@@ -293,5 +291,5 @@ uint32_t xy_csprng_uniform(uint32_t upper_bound) {
 void xy_csprng_cleanup(void) {
     /* Securely erase state */
     xy_memset(&g_csprng_ctx, 0, sizeof(g_csprng_ctx));
-    xy_log_d("CSPRNG: Cleaned up\n");
+    xy_log_d("CSPRNG: Cleaned up");
 }

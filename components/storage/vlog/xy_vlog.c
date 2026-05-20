@@ -15,7 +15,7 @@
 
 #include "xy_vlog.h"
 #include "xy_stdio.h"   /* xy_vsnprintf */
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Module state ───────────────────────────────────────────────────── */
 

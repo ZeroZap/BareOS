@@ -11,7 +11,7 @@
 
 #include "process.h"
 #include "etimer.h"    /* etimer_run() */
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Event queue ─────────────────────────────────────────────────────── */
 

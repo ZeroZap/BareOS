@@ -56,7 +56,7 @@
 
 #include "ctimer.h"   /* struct ctimer, ctimer_set/stop */
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 #ifdef __cplusplus
 extern "C" {

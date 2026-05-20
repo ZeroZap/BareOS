@@ -17,7 +17,7 @@
 #define XY_UBX_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* ── Message class / ID constants ────────────────────────────────── */
 

@@ -9,7 +9,7 @@
  */
 
 #include "xy_mem.h"
-#include <string.h>
+#include "xy_string.h"
 
 /*==============================================================================
  * 后端检测（与 xy_os_cfg.h 保持一致）
@@ -321,32 +321,31 @@ int xy_mem_pool_free(void *ptr)
     xy_mem_pool_t *pool;
     mem_block_t *block;
     xy_mem_size_t block_size;
-    alloc_entry_t *record;
 
     if (ptr == NULL) {
         return -1;
     }
 
-#if XY_MEM_SAFE_CHECK
-    /* 查找分配记录 */
-    record = find_alloc_record(ptr);
-    if (record == NULL) {
-        /* 未找到记录，可能是双重释放 */
-        return -1;
+    /* 计算块头部地址 */
+    block = (mem_block_t *)((unsigned char *)ptr - sizeof(mem_block_t));
+
+#if XY_MEM_SAFE_CHECK && XY_MEM_TRACKING
+    {
+        alloc_entry_t *record = find_alloc_record(ptr);
+        if (record == NULL) {
+            return -1;
+        }
+        pool = record->pool;
+        block_size = record->size;
     }
-    pool = record->pool;
-    block_size = record->size;
 #else
+    /* 从 block header 读取大小，通过地址范围定位所属池 */
     pool = find_pool_by_ptr(ptr);
     if (pool == NULL) {
         return -1;
     }
-    /* 计算块大小（需要估算或从记录获取） */
-    block_size = 0;  /* 如果没有追踪则无法精确释放 */
+    block_size = block->size;
 #endif
-
-    /* 计算块头部地址 */
-    block = (mem_block_t *)((unsigned char *)ptr - sizeof(mem_block_t));
 
     MEM_ENTER_CRITICAL();
 
@@ -369,7 +368,8 @@ int xy_mem_pool_free(void *ptr)
 
 static void pool_free_to_free_list(xy_mem_pool_t *pool, void *ptr, xy_mem_size_t size)
 {
-    mem_block_t *block = (mem_block_t *)((unsigned char *)ptr - sizeof(mem_block_t));
+    /* ptr is already the block header (computed before calling this function) */
+    mem_block_t *block = (mem_block_t *)ptr;
     mem_block_t *p;
     mem_block_t *prev = NULL;
 
@@ -842,7 +842,7 @@ xy_mem_count_t xy_mem_leak_report(xy_mem_pool_t *pool)
             count++;
 #if defined(_XY_DEBUG_) || XY_DEBUG
             /* 打印泄漏信息 */
-            /* printf("LEAK: %p, size=%d, file=%s, line=%d\n",
+            /* xy_printf("LEAK: %p, size=%d, file=%s, line=%d\n",
                    p->ptr, p->size, p->file ? p->file : "unknown", p->line); */
 #endif
         }
@@ -880,7 +880,7 @@ void xy_mem_init_internal_pool(void)
 
 #if (PLATFORM == PLATFORM_X86)
 
-#include <stdio.h>
+#include "xy_stdio.h"
 
 void xy_mem_test(void)
 {
@@ -889,50 +889,50 @@ void xy_mem_test(void)
     void *p1, *p2, *p3;
     xy_mem_info_t info;
 
-    printf("\n=== Memory Pool Test ===\n");
+    xy_printf("\n=== Memory Pool Test ===\n");
 
     /* 初始化池 */
     xy_mem_pool_init(&pool, "test", ram, sizeof(ram));
-    printf("Pool init: %d bytes\n", pool.size);
+    xy_printf("Pool init: %d bytes\n", pool.size);
 
     /* 分配测试 */
     p1 = xy_mem_pool_alloc(&pool, 100);
-    printf("Alloc p1: %p (100 bytes)\n", p1);
+    xy_printf("Alloc p1: %p (100 bytes)\n", p1);
 
     p2 = xy_mem_pool_alloc(&pool, 200);
-    printf("Alloc p2: %p (200 bytes)\n", p2);
+    xy_printf("Alloc p2: %p (200 bytes)\n", p2);
 
     p3 = xy_mem_pool_alloc(&pool, 50);
-    printf("Alloc p3: %p (50 bytes)\n", p3);
+    xy_printf("Alloc p3: %p (50 bytes)\n", p3);
 
     xy_mem_pool_info(&pool, &info);
-    printf("Used: %d/%d, Alloc count: %d\n", info.used, info.total, info.alloc_count);
+    xy_printf("Used: %d/%d, Alloc count: %d\n", info.used, info.total, info.alloc_count);
 
     /* 释放测试 */
-    printf("\nFree p2...\n");
+    xy_printf("\nFree p2...\n");
     xy_mem_pool_free(p2);
 
     xy_mem_pool_info(&pool, &info);
-    printf("Used: %d, Largest free: %d\n", info.used, info.largest_free);
+    xy_printf("Used: %d, Largest free: %d\n", info.used, info.largest_free);
 
     /* 重新分配到刚释放的空间 */
     p2 = xy_mem_pool_alloc(&pool, 80);
-    printf("Realloc p2: %p (80 bytes)\n", p2);
+    xy_printf("Realloc p2: %p (80 bytes)\n", p2);
 
     /* 不定长分配测试 */
-    printf("\n=== Variable Size Alloc Test ===\n");
+    xy_printf("\n=== Variable Size Alloc Test ===\n");
     void *v1 = xy_malloc_variable(256);
-    printf("Variable alloc v1: %p (256 bytes)\n", v1);
-    printf("Variable size: %d\n", xy_malloc_variable_size(v1));
+    xy_printf("Variable alloc v1: %p (256 bytes)\n", v1);
+    xy_printf("Variable size: %d\n", xy_malloc_variable_size(v1));
     xy_free_variable(v1);
-    printf("Variable freed\n");
+    xy_printf("Variable freed\n");
 
     /* 泄漏检测 */
-    printf("\n=== Leak Report ===\n");
+    xy_printf("\n=== Leak Report ===\n");
     xy_mem_count_t leaks = xy_mem_leak_report(&pool);
-    printf("Leaks: %d\n", leaks);
+    xy_printf("Leaks: %d\n", leaks);
 
-    printf("\n=== Test Complete ===\n");
+    xy_printf("\n=== Test Complete ===\n");
 }
 
 #endif /* PLATFORM_X86 */

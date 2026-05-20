@@ -8,6 +8,7 @@
 #include "xy_string.h"
 #include "xy_ctype.h"
 #include "xy_stdlib.h"
+#include "xy_mem.h"
 
 /* Memory Functions */
 

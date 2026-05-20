@@ -1,0 +1,401 @@
+# 嵌入式AT指令框架（HTTP大数据接收）PC模拟+硬件移植方案
+
+## 一、方案总述
+
+### 1. 方案核心目标
+
+- **PC端优先**：无硬件依赖，Windows控制台完整模拟串口AT指令收发、HTTP固定长度数据接收、环形缓冲中断读写、Protothread裸机调度，可直接编译调试
+
+- **硬件无缝迁移**：底层IO/串口/延时抽象化，后续拿到MCU（HC32/CH32/N32等）硬件，仅替换底层驱动文件，上层AT逻辑、HTTP数据处理代码零修改
+
+- **解决核心痛点**：AT指令执行HTTP操作后，稳定接收指定长度数据，不丢包、不阻塞、不占用CPU，适配裸机多任务轮询场景
+
+- **保留核心机制**：环形缓冲读写指针分离、仅中断写指针关中断保护、主循环读指针无冲突、无多余中断关闭操作
+
+### 2. 适用场景
+
+- PC端模拟USB串口AT模块（4G/ESP8266等）HTTP通讯
+
+- 裸机嵌入式MCU AT指令+TCP/HTTP大数据接收
+
+- 多AT任务轮询、超时处理、定长数据解析
+
+### 3. 架构设计（分层抽象，无依赖）
+
+1. **上层业务层**：AT指令引擎、HTTP定长数据处理、Protothread任务调度（无硬件依赖，PC/硬件通用）
+
+2. **中间缓冲层**：环形缓冲区（共享数据安全处理，无平台依赖）
+
+3. **底层驱动层**：PC模拟驱动/MCU硬件驱动（抽象接口，按需替换）
+
+4. **平台接口层**：串口初始化、读写、延时、中断开关（统一接口，上层无感）
+
+## 二、PC端模拟完整实现（优先）
+
+### （一）开发环境
+
+- 编译器：MinGW/Visual Studio（控制台程序）
+
+- 依赖：Windows系统API，无第三方库，纯标准C
+
+- 模拟方式：Windows串口API操作USB转串口（虚拟COM口）、临界区模拟中断保护、Sleep模拟系统时钟
+
+### （二）文件结构（PC端）
+
+```Plain Text
+
+├── main.c              // 主函数、任务调度、模拟入口
+├── platform_pc.c/h     // PC平台抽象驱动（串口、延时、中断保护）
+├── ring_buffer.c/h     // 环形缓冲区（无依赖）
+├── pt.c/h              // Protothread轻量线程（无依赖）
+├── at_engine.c/h       // AT指令引擎（含HTTP定长数据处理，无依赖）
+```
+
+### （三）核心模块代码实现
+
+#### 1. 平台抽象接口（platform_pc.h）
+
+统一上层调用接口，PC/硬件通用，屏蔽硬件差异
+
+```C
+
+#ifndef __PLATFORM_PC_H
+#define __PLATFORM_P<stdint.h>
+#include <stdbool.h>
+
+// 串口初始化（开机IO）
+bool Platform_UART_Init(const char* com_port, uint32_t baudrate);
+// 串口反初始化（关机IO）
+void Platform_UART_DeInit(void);
+// 串口单字节发送
+bool Platform_UART_SendByte(uint8_t data);
+// 串口非阻塞接收
+bool Platform_UART_RecvByte(uint8_t *data);
+// 获取系统毫秒时钟
+uint32_t Platform_GetTickMs(void);
+// 关中断（PC用临界区模拟）
+void Platform_DisableIRQ(void);
+// 开中断（PC用临界区模拟）
+void Platform_EnableIRQ(void);
+
+#endif
+```
+
+#### 2. 环形缓冲区（ring_buffer.h）
+
+读写指针分离，仅中断/模拟接收线程修改写指针，主循环修改读指针，无冲突
+
+```C
+
+#ifndef __RING_BUFFER_H
+#define __RING<stdint.h>
+#include <stdbool.h>
+
+#define RING_BUFFER_SIZE    1024    // 适配HTTP大数据，增大缓冲
+
+typedef struct {
+    uint8_t buffer[RING_BUFFER_SIZE];
+    volatile uint16_t write_ptr;   // 写指针：中断/模拟接收修改，volatile修饰
+    uint16_t read_ptr;             // 读指针：主循环修改，无需保护
+} RingBuffer_T;
+
+// 缓冲初始化
+void RingBuffer_Init(RingBuffer_T *rb);
+// 缓冲写入（中断/模拟接收调用，需关中断保护）
+bool RingBuffer_Write(RingBuffer_T *rb, uint8_t data);
+// 缓冲读取（主循环调用，无需关中断）
+bool RingBuffer_Read(RingBuffer_T *rb, uint8_t *data);
+// 判断缓冲是否为空
+bool RingBuffer_IsEmpty(RingBuffer_T *rb);
+// 获取缓冲已接收数据长度
+uint16_t RingBuffer_GetLen(RingBuffer_T *rb);
+
+#endif
+```
+
+#### 3. Protothread轻量线程（pt.h）
+
+裸机多任务调度，无操作系统，实现任务阻塞等待、超时轮询
+
+```C
+
+#ifndef __PT_H
+#define __PT_H
+
+<stdint.h>
+
+struct pt {
+    uint16_t lc;
+};
+
+#define PT_THREAD(name)     char name(struct pt *pt)
+#define PT_BEGIN(pt)        switch(pt->lc) { case 0:
+#define PT_WAIT_UNTIL(pt, cond)  pt->lc = __LINE__; case __LINE__: if(!(cond)) return 0
+#define PT_YIELD(pt)        pt->lc = __LINE__; return 0; case __LINE__:
+#define PT_END(pt)          } pt->lc = 0; return 1
+#define PT_INIT(pt)         (pt)->lc = 0
+
+#endif
+```
+
+#### 4. AT指令引擎（at_engine.h）
+
+包含普通AT指令、HTTP定长数据接收、超时处理、状态机管理
+
+```C
+
+#ifndef __AT_ENGINE_H
+#define __AT_ENGINE_H
+
+#include "pt.h"
+#include "ring_buffer.h"
+
+// AT指令状态
+typedef enum {
+    AT_STATE_IDLE = 0,        // 空闲
+    AT_STATE_WAIT_RESP,       // 等待AT响应
+    AT_STATE_PARSE_LEN,       // 解析HTTP数据长度
+    AT_STATE_RECV_DATA,       // 接收HTTP定长数据
+    AT_STATE_OK,              // 执行成功
+    AT_STATE_TIMEOUT          // 执行超时
+} AT_State_T;
+
+// AT指令上下文
+typedef struct {
+    struct pt pt;                 // 轻量线程
+    RingBuffer_T *rb;             // 绑定环形缓冲
+    const char *at_cmd;           // 待发送AT指令
+    uint32_t timeout_ms;          // 超时时间
+    uint32_t send_tick;           // 发送时间戳
+    AT_State_T state;            // 当前状态
+    // HTTP定长数据专用
+    uint8_t *http_data_buf;       // HTTP数据存储缓冲区
+    uint32_t http_total_len;      // HTTP总数据长度
+    uint32_t http_recv_len;       // 已接收HTTP数据长度
+} AT_Context_T;
+
+// AT引擎初始化
+void AT_Engine_Init(AT_Context_T *ctx, RingBuffer_T *rb, uint32_t timeout_ms);
+// AT任务线程
+PT_THREAD(AT_Task_Thread(struct pt *pt, AT_Context_T *ctx));
+// 发送AT指令
+void AT_Send_Cmd(AT_Context_T *ctx, const char *cmd, uint8_t *data_buf, uint32_t buf_len);
+
+#endif
+```
+
+#### 5. PC主函数（main.c）
+
+模拟系统时钟、串口接收、任务调度，完整模拟硬件运行逻辑
+
+```Plain Text
+
+#include "platform_pc.h"
+#include "ring_buffer.h"
+#include "pt.h"
+#include "at_engine.h"
+
+// 全局环形缓冲
+static RingBuffer_T uart_rb;
+// AT指令上下文
+static AT_Context_T at_ctx;
+// HTTP数据存储缓冲区
+static uint8_t http_data[2048];
+
+// 模拟串口接收线程（替代硬件串口中断）
+DWORD WINAPI UART_Recv_Thread(LPVOID lpParam) {
+    uint8_t data;
+    while(1) {
+        // 非阻塞读取串口数据
+        if(Platform_UART_RecvByte(&data)) {
+            // 关中断保护写指针
+            Platform_DisableIRQ();
+            RingBuffer_Write(&uart_rb, data);
+            Platform_EnableIRQ();
+        }
+        Sleep(1);
+    }
+    return 0;
+}
+
+int main() {
+    // 1. 初始化平台（打开COM3，波特率9600，根据实际修改）
+    if(!Platform_UART_Init("COM3", 9600)) {
+        printf("串口初始化失败！\n");
+        return -1;
+    }
+    printf("PC模拟AT框架启动成功\n");
+
+    // 2. 初始化环形缓冲、AT引擎
+    RingBuffer_Init(&uart_rb);
+    AT_Engine_Init(&at_ctx, &uart_rb, 5000);
+
+    // 3. 创建模拟串口接收线程（替代硬件中断）
+    CreateThread(NULL, 0, UART_Recv_Thread, NULL, 0, NULL);
+
+    // 4. 发送HTTP读取AT指令（示例：AT+HTTPREAD）
+    AT_Send_Cmd(&at_ctx, "AT+HTTPREAD\r\n", http_data, sizeof(http_data));
+
+    // 5. 主循环调度AT任务
+    while(1) {
+        // 调度AT轻量线程
+        AT_Task_Thread(&at_ctx.pt, &at_ctx);
+
+        // 状态打印
+        if(at_ctx.state == AT_STATE_OK) {
+            printf("HTTP数据接收完成，长度：%d\n", at_ctx.http_recv_len);
+            printf("接收数据：%s\n", http_data);
+            memset(http_data, 0, sizeof(http_data));
+            at_ctx.state = AT_STATE_IDLE;
+            // 重新发送指令循环测试
+            AT_Send_Cmd(&at_ctx, "AT+HTTPREAD\r\n", http_data, sizeof(http_data));
+        } else if(at_ctx.state == AT_STATE_TIMEOUT) {
+            printf("AT指令超时！\n");
+            at_ctx.state = AT_STATE_IDLE;
+        }
+        Sleep(10);
+    }
+
+    // 反初始化
+    Platform_UART_DeInit();
+    return 0;
+}
+```
+
+### （四）PC端调试步骤
+
+1. 连接USB转串口模块/AT模块，查看设备管理器COM口号
+
+2. 修改main.c中串口COM口号、波特率，与实际模块一致
+
+3. 编译运行程序，自动发送AT+HTTPREAD指令
+
+4. 模块返回+HTTPREAD:xxx后，程序自动解析长度，接收完整HTTP数据
+
+5. 控制台打印接收状态、数据长度及内容，可单步调试查看缓冲、状态变化
+
+## 三、嵌入式IDE硬件移植方案
+
+### 1. 移植原则
+
+- **上层代码零修改**：ring_buffer、pt、at_engine代码直接复制
+
+- **仅替换底层驱动**：删除platform_pc.c/h，新建platform_mcu.c/h
+
+- **接口完全一致**：platform_mcu实现与PC端相同的抽象接口
+
+### 2. 底层驱动接口实现（platform_mcu.h）
+
+```C
+
+#ifndef __PLATFORM_MCU_H
+#define __PLATFORM_MCU_H
+
+#include<stdint.h>
+<stdbool.h>
+
+// 串口初始化（对应MCU串口外设）
+bool Platform_UART_Init(uint32_t baudrate);
+// 串口反初始化
+void Platform_UART_DeInit(void);
+// 串口单字节发送
+bool Platform_UART_SendByte(uint8_t data);
+// 串口非阻塞接收
+bool Platform_UART_RecvByte(uint8_t *data);
+// 获取系统毫秒时钟（SysTick）
+uint32_t Platform_GetTickMs(void);
+// 关中断（MCU内核指令）
+void Platform_DisableIRQ(void);
+// 开中断（MCU内核指令）
+void Platform_EnableIRQ(void);
+
+#endif
+```
+
+### 3. 硬件关键适配
+
+1. **串口中断配置**：MCU串口接收中断中，调用RingBuffer_Write，前后加中断开关保护
+
+2. **系统时钟**：SysTick配置1ms中断，实现Platform_GetTickMs
+
+3. **中断开关**：使用__disable_irq()/__enable_irq()实现临界区保护
+
+4. **缓冲适配**：根据MCU内存调整RING_BUFFER_SIZE，避免内存溢出
+
+### 4. 硬件主函数逻辑
+
+```C
+
+#include "platform_mcu.h"
+#include "ring_buffer.h"
+#include "pt.h"
+#include "at_engine.h"
+
+static RingBuffer_T uart_rb;
+static AT_Context_T at_ctx;
+static uint8_t http_data[2048];
+
+// 串口接收中断服务函数
+void USART1_IRQHandler(void) {
+    if(串口接收中断标志) {
+        uint8_t data = 串口接收数据;
+        Platform_DisableIRQ();
+        RingBuffer_Write(&uart_rb, data);
+        Platform_EnableIRQ();
+        清除中断标志;
+    }
+}
+
+int main(void) {
+    // 硬件初始化
+    Platform_UART_Init(9600);
+    RingBuffer_Init(&uart_rb);
+    AT_Engine_Init(&at_ctx, &uart_rb, 5000);
+
+    // 发送HTTP读取指令
+    AT_Send_Cmd(&at_ctx, "AT+HTTPREAD\r\n", http_data, sizeof(http_data));
+
+    while(1) {
+        // 调度AT任务
+        AT_Task_Thread(&at_ctx.pt, &at_ctx);
+        // 业务逻辑处理
+    }
+}
+```
+
+## 四、核心优化点说明
+
+1. **读写指针安全机制**：仅写指针由中断/模拟线程修改，加中断保护；读指针主循环修改，无冲突，无需关中断
+
+2. **HTTP定长数据处理**：状态机解析数据长度，分批从环形缓冲读取，不阻塞、不丢包，支持大数据接收
+
+3. **无操作系统多任务**：Protothread实现任务轮询，占用资源极少，适配裸机MCU
+
+4. **跨平台兼容**：分层抽象，PC模拟验证逻辑后，直接移植到硬件，大幅缩短开发周期
+
+5. **非阻塞设计**：接收数据时让出CPU，不影响其他任务运行
+
+## 五、IDE AI生成提示词（直接复制使用）
+
+```Plain Text
+
+请基于以下嵌入式裸机AT指令框架方案，生成可直接在Keil/STM32CubeIDE/HC32IDE中编译运行的完整代码，要求：
+1. 适配HC32L021/CH32V307/N32L403单片机，串口1中断接收，SysTick 1ms定时
+2. 实现环形缓冲区、Protothread轻量线程、AT指令引擎、HTTP定长数据接收功能
+3. 分层设计，上层业务与底层驱动分离，提供统一平台抽象接口
+4. 仅在环形缓冲写操作时关中断，读操作无需关中断
+5. 实现AT+HTTPREAD指令发送、数据长度解析、完整数据接收、超时处理
+6. 代码加详细注释，符合嵌入式裸机开发规范，无操作系统依赖
+7. 主循环实现任务调度，支持循环测试
+```
+
+## 六、注意事项
+
+1. PC端模拟时，确保串口权限正常，无其他程序占用COM口
+
+2. 硬件移植时，根据MCU内存调整环形缓冲、HTTP数据缓冲区大小
+
+3. HTTP数据长度解析时，过滤AT指令响应中的特殊字符，精准提取数字
+
+4. 超时时间根据实际网络、模块响应速度调整，避免误判超时
+> （注：文档部分内容可能由 AI 生成）

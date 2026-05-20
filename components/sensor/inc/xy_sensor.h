@@ -9,7 +9,7 @@
 #define XY_SENSOR_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 #include "xy_sensor_channel.h"
 #include "xy_sensor_attr.h"
 #include "xy_sensor_device.h"

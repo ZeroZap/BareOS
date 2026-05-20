@@ -3,7 +3,7 @@
  */
 
 #include "xy_ubx.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── FSM states ───────────────────────────────────────────────────── */
 

@@ -58,7 +58,7 @@
 #define XY_GUI_H
 
 #include "xy_gdi.h"   /* xy_dc_t, xy_gdi_* */
-#include <stdbool.h>
+#include "xy_typedef.h"
 #include <stdint.h>
 
 #ifdef __cplusplus

@@ -22,7 +22,7 @@
  */
 
 #include "xy_gui.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Row geometry ────────────────────────────────────────────────────── */
 

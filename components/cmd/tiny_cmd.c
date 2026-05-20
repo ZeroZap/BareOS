@@ -7,7 +7,7 @@
 #include "xy_stdio.h"
 #include "xy_string.h"
 #include <stdarg.h>
-#include <stddef.h>
+#include "xy_typedef.h"
 
 /* ── Module-level state ──────────────────────────────────────────────── */
 
@@ -28,7 +28,7 @@ static int _cmd_help(tiny_cmd_t *sh, int argc, char *argv[])
     for (uint8_t t = 0u; t < s_table_count; t++) {
         for (uint8_t i = 0u; i < s_tables[t].count; i++) {
             const tiny_cmd_entry_t *e = &s_tables[t].tbl[i];
-            tiny_cmd_printf(sh, "  %-12s  %s\r\n", e->name, e->desc);
+            tiny_cmd_printf(sh, "  %s\t%s\r\n", e->name, e->desc);
         }
     }
 

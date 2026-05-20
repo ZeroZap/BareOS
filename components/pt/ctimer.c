@@ -4,7 +4,7 @@
  */
 
 #include "ctimer.h"
-#include <stddef.h>
+#include "xy_typedef.h"
 
 /* ── Active list ─────────────────────────────────────────────────────── */
 

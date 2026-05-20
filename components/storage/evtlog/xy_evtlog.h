@@ -31,7 +31,7 @@
 #define XY_EVTLOG_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* ── Event types ────────────────────────────────────────────────────── */
 

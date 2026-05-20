@@ -1,7 +1,7 @@
 #ifndef _LINUX_LIST_H
 #define _LINUX_LIST_H
 	
-#include <stddef.h>		
+#include "xy_typedef.h"		
 
 #if !defined(__GNUC__)
     #define typeof	(struct list_head)

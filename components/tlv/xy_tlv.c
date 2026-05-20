@@ -4,7 +4,7 @@
  */
 
 #include "xy_tlv.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ==================== Internal Helper Macros ==================== */
 

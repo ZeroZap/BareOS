@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"taskkill /F /IM bareos_pc.exe 2>NUL\")",
+      "Bash(rm -f \"e:/github_download/_ZeroZap/Maker/BareOS/project/Tiny-App/build/bareos_pc.exe\")",
+      "Bash(cmake -B build -S . -G \"MinGW Makefiles\")"
+    ]
+  }
+}

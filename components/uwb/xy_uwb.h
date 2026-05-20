@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* -----------------------------------------------------------------------
  * IEEE 802.15.4 Frame Control — frame type field values

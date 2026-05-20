@@ -17,7 +17,7 @@
  */
 
 #include "xy_evtlog.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── CRC-16/CCITT ───────────────────────────────────────────────────── */
 

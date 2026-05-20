@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include <string.h>
+#include "xy_string.h"
 #include "xy_tiny_crypto.h"
 
 // AES S-box

@@ -149,4 +149,33 @@ void *xy_memrchr(const void *s, int c, size_t n);
 }
 #endif
 
+/* ── Standard-name compatibility macros ─────────────────────────────────
+ * Include this header instead of <string.h> — calls to memcpy(), strlen()
+ * etc. are automatically redirected to the xy_* implementations.
+ * Cast parameters to the types the xy_* functions expect so that size_t
+ * expressions (from sizeof or from <stddef.h>-sourced code) compile cleanly.
+ */
+#define memset(d, v, n)      xy_memset((d), (uint8_t)(v),   (uint32_t)(n))
+#define memcpy(d, s, n)      xy_memcpy((d), (s),            (uint32_t)(n))
+#define memcmp(a, b, n)      xy_memcmp((a), (b),            (uint32_t)(n))
+#define memmove(d, s, n)     xy_memmove((d), (s),           (size_t)(n))
+#define memchr(s, c, n)      xy_memchr((s), (c),            (size_t)(n))
+
+#define strlen(s)            ((size_t)xy_strlen(s))
+#define strnlen(s, n)        xy_strnlen((s), (size_t)(n))
+#define strcmp(a, b)         ((int)xy_strcmp((a), (b)))
+#define strncmp(a, b, n)     ((int)xy_strncmp((a), (b), (uint32_t)(n)))
+#define strcasecmp(a, b)     xy_strcasecmp((a), (b))
+#define strncasecmp(a, b, n) xy_strncasecmp((a), (b), (size_t)(n))
+#define strcpy(d, s)         xy_strcpy((d), (s))
+#define strncpy(d, s, n)     xy_strncpy((d), (s), (uint32_t)(n))
+#define strcat(d, s)         xy_strcat((d), (s))
+#define strncat(d, s, n)     xy_strncat((d), (s), (uint32_t)(n))
+#define strchr(s, c)         xy_strchr((s), (uint8_t)(c))
+#define strrchr(s, c)        xy_strrchr((s), (uint8_t)(c))
+#define strstr(a, b)         xy_strstr((a), (b))
+#define strtok(s, d)         xy_strtok((s), (d))
+#define strcspn(a, b)        xy_strcspn((a), (b))
+#define strspn(s, a)         xy_strspn((s), (a))
+
 #endif

@@ -18,7 +18,7 @@
 #include "xy_flog.h"
 #include "xy_crc.h"
 #include "xy_stdio.h"
-#include <string.h>
+#include "xy_string.h"
 #include <stdarg.h>
 
 /* ── Constants ───────────────────────────────────────────────────────── */

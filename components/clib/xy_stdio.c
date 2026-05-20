@@ -6,9 +6,10 @@
  */
 
 #include "xy_stdio.h"
+#include "xy_string.h"
 #include <stdarg.h>
-#include <string.h>
-#include <limits.h>
+
+/* LONG_MAX comes from xy_typedef.h via xy_string.h */
 
 #ifndef XY_UNUSED
 #define XY_UNUSED(x) (void)(x)
@@ -101,8 +102,8 @@ static int float_to_str(double value, char *str, int precision)
     /* Convert integer part */
     char int_str[32];
     int_to_str(int_part, int_str, 10, 0);
-    int int_len = strlen(int_str);
-    strcpy(str, int_str);
+    int int_len = (int)xy_strlen(int_str);
+    xy_strcpy(str, int_str);
     str += int_len;
     
     /* Add decimal point if needed */
@@ -263,8 +264,8 @@ int32_t xy_snprintf(char *buf, uint32_t size, const char *fmt, ...)
     if (len < 0) return len;
     
     /* Copy to destination buffer with size limit */
-    uint32_t copy_len = (len < size) ? len : size - 1;
-    strncpy(buf, temp_buf, copy_len);
+    uint32_t copy_len = ((uint32_t)len < size) ? (uint32_t)len : size - 1;
+    xy_strncpy(buf, temp_buf, copy_len);
     buf[copy_len] = '\0';
     
     return copy_len;

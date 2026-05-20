@@ -29,8 +29,8 @@
 #define EFLASH_H
 
 #include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
+#include "xy_typedef.h"
+#include "xy_typedef.h"
 
 #ifdef __cplusplus
 extern "C" {

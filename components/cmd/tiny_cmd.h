@@ -59,7 +59,7 @@
 #define TINY_CMD_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 #ifdef __cplusplus
 extern "C" {

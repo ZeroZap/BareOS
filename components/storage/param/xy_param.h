@@ -29,7 +29,7 @@
 #define XY_PARAM_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 #include "../fee/xy_fee_nano.h"
 
 /* ── Parameter IDs (logical address in FEE) ────────────────────────── */

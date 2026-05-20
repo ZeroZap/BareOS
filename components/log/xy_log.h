@@ -11,7 +11,7 @@
 #ifndef XY_LOG_H
 #define XY_LOG_H
 
-#include <stddef.h>
+#include "xy_typedef.h"
 #include <stdint.h>
 #include "xy_stdio.h"
 
@@ -59,6 +59,12 @@ extern uint8_t g_xy_log_dinamic_level;
 #else
 #define XY_LOG_D(fmt, ...)
 #endif
+
+/* ── Lowercase aliases ───────────────────────────────────────────────── */
+#define xy_log_e  XY_LOG_E
+#define xy_log_w  XY_LOG_W
+#define xy_log_i  XY_LOG_I
+#define xy_log_d  XY_LOG_D
 
 /* ── API ─────────────────────────────────────────────────────────────── */
 

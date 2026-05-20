@@ -6,7 +6,7 @@
  */
 
 #include "xy_sha256.h"
-#include <string.h>
+#include "xy_string.h"
 
 /**
  * @brief SHA256 常量
@@ -215,14 +215,26 @@ void xy_sha256_finish(xy_sha256_ctx_t *ctx, uint8_t *hash)
 int xy_sha256(const uint8_t *data, size_t len, uint8_t *hash)
 {
     xy_sha256_ctx_t ctx;
-    
+
     if (!data || !hash) {
         return -1;
     }
-    
+
     xy_sha256_init(&ctx);
     xy_sha256_update(&ctx, data, len);
     xy_sha256_finish(&ctx, hash);
-    
+
     return 0;
+}
+
+/* Compatibility wrappers for xy_tiny_crypto.h API */
+int xy_sha256_final(xy_sha256_ctx_t *ctx, uint8_t *digest)
+{
+    xy_sha256_finish(ctx, digest);
+    return 0;
+}
+
+int xy_sha256_hash(const uint8_t *data, size_t len, uint8_t *digest)
+{
+    return xy_sha256(data, len, digest);
 }

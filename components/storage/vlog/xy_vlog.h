@@ -33,8 +33,8 @@
 #define XY_VLOG_H
 
 #include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
+#include "xy_typedef.h"
 #include <stdarg.h>
 
 #ifdef __cplusplus

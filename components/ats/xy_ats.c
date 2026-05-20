@@ -5,7 +5,7 @@
 
 #include "xy_ats.h"
 #include "xy_stdio.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Init ───────────────────────────────────────────────────────────── */
 

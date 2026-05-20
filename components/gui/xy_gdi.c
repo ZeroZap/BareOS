@@ -7,7 +7,7 @@
  */
 
 #include "xy_gdi.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Global state ───────────────────────────────────────────────────── */
 

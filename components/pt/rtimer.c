@@ -8,7 +8,7 @@
  */
 
 #include "rtimer.h"
-#include <stddef.h>
+#include "xy_typedef.h"
 
 static struct rtimer *s_pending;
 

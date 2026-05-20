@@ -9,8 +9,8 @@
 #define XY_ATS_HASH_H
 
 #include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
+#include "xy_typedef.h"
 
 #ifdef __cplusplus
 extern "C" {

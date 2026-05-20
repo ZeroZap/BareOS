@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* ==================== 配置 ==================== */
 

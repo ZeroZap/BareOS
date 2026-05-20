@@ -28,7 +28,7 @@
 #define XY_ETIMER_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* Forward-declare process to avoid a circular include. */
 struct process;

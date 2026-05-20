@@ -11,8 +11,8 @@
  */
 
 #include "xy_gnss.h"
-#include <string.h>
-#include <stddef.h>
+#include "xy_string.h"
+#include "xy_typedef.h"
 
 /* ── Internal parser state ────────────────────────────────────────── */
 

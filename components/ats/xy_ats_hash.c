@@ -6,7 +6,7 @@
  */
 
 #include "xy_ats_hash.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ==================== Helper Functions ==================== */
 

@@ -15,7 +15,7 @@
  */
 
 #include "xy_btn.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── Registry ────────────────────────────────────────────────────────── */
 

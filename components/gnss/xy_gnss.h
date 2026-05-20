@@ -32,7 +32,7 @@
 #define XY_GNSS_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* ── Position fix ─────────────────────────────────────────────────── */
 

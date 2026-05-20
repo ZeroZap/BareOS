@@ -6,7 +6,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
-#include <stdbool.h>
+#include "xy_typedef.h"
 
 /* -----------------------------------------------------------------------
  * DSC format codes (ITU-R M.493 Table 1)

@@ -4,7 +4,7 @@
  */
 
 #include "xy_param.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ── RAM shadow ─────────────────────────────────────────────────────── */
 

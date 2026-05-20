@@ -6,7 +6,7 @@
  */
 
 #include "mb_tiny.h"
-#include <string.h>
+#include "xy_string.h"
 
 /* ==================== CRC16 ==================== */
 

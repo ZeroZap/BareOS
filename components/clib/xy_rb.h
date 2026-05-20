@@ -1,8 +1,7 @@
 #ifndef _XY_RB_H_
 #define _XY_RB_H_
 
-#include <stdint.h>
-#include <stddef.h>
+#include "xy_typedef.h"  /* size_t, uint8_t, uint32_t, int32_t */
 
 #ifdef __cplusplus
 extern "C" {
