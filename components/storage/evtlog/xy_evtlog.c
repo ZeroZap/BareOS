@@ -78,11 +78,7 @@ static void erase_if_needed(uint32_t idx)
 {
     uint32_t addr    = slot_addr(idx);
     uint32_t pg_base = (addr / s.page_size) * s.page_size;
-    /* Check if the whole page is clear (all 0xFF). */
-    uint8_t sample[4];
-    s.read(pg_base, sample, 4);
-    if (sample[0] != 0xFF || sample[1] != 0xFF ||
-        sample[2] != 0xFF || sample[3] != 0xFF) {
+    if (!slot_is_empty(idx)) {
         s.erase(pg_base, s.page_size);
     }
 }

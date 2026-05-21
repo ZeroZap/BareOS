@@ -12,6 +12,7 @@
 
 #include "xy_gnss.h"
 #include "xy_string.h"
+#include "xy_stdio.h"
 #include "xy_typedef.h"
 
 /* ── Internal parser state ────────────────────────────────────────── */
@@ -294,14 +295,16 @@ int xy_gnss_format_pos(const xy_gnss_pos_t *pos, char *buf, int bufsize)
     char lat_dir = pos->lat_1e7 >= 0 ? 'N' : 'S';
     char lon_dir = pos->lon_1e7 >= 0 ? 'E' : 'W';
 
-    /* Format: "LAT:31.4525100N LON:121.4525100E" */
+    /* xy_stdio supports basic specifiers only: avoid width and long modifiers. */
     int n = 0;
-    n += snprintf(buf + n, (size_t)(bufsize - n),
-                  "LAT:%ld.%07ld%c LON:%ld.%07ld%c SPD:%ukn UTC:%02u:%02u:%02u",
-                  (long)(lat / 10000000L), (long)(lat % 10000000L), lat_dir,
-                  (long)(lon / 10000000L), (long)(lon % 10000000L), lon_dir,
-                  pos->speed_knots,
-                  pos->hour, pos->minute, pos->second);
+    n += xy_snprintf(buf + n, (uint32_t)(bufsize - n),
+                     "LAT:%d.%d%c LON:%d.%d%c SPD:%ukn UTC:%u:%u:%u",
+                     (int)(lat / 10000000L), (int)(lat % 10000000L), lat_dir,
+                     (int)(lon / 10000000L), (int)(lon % 10000000L), lon_dir,
+                     (unsigned int)pos->speed_knots,
+                     (unsigned int)pos->hour,
+                     (unsigned int)pos->minute,
+                     (unsigned int)pos->second);
     return n;
 }
 
@@ -318,10 +321,10 @@ void xy_gnss_to_nmea(const xy_gnss_pos_t *pos,
     int32_t lon_deg  = lon / 10000000L;
     int32_t lon_min_1e4 = (lon % 10000000L) * 60L / 1000L;
 
-    snprintf(lat_str, 12, "%02ld%02ld.%04ld",
-             (long)lat_deg, (long)(lat_min_1e4 / 10000), (long)(lat_min_1e4 % 10000));
-    snprintf(lon_str, 12, "%03ld%02ld.%04ld",
-             (long)lon_deg, (long)(lon_min_1e4 / 10000), (long)(lon_min_1e4 % 10000));
+    xy_snprintf(lat_str, 12, "%d%d.%d",
+                (int)lat_deg, (int)(lat_min_1e4 / 10000), (int)(lat_min_1e4 % 10000));
+    xy_snprintf(lon_str, 12, "%d%d.%d",
+                (int)lon_deg, (int)(lon_min_1e4 / 10000), (int)(lon_min_1e4 % 10000));
 
     *lat_dir = pos->lat_1e7 >= 0 ? 'N' : 'S';
     *lon_dir = pos->lon_1e7 >= 0 ? 'E' : 'W';
