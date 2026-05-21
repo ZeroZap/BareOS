@@ -248,8 +248,8 @@ void *xy_mem_pool_alloc(xy_mem_pool_t *pool, xy_mem_size_t size)
         }
     }
 
-    /* 对齐大小 */
-    alloc_size = align_size(size);
+    /* Include the free-list header because the returned pointer skips it. */
+    alloc_size = align_size(size + sizeof(mem_block_t));
 
     MEM_ENTER_CRITICAL();
 

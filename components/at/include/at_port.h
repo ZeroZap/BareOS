@@ -54,12 +54,16 @@
 /**
  *@brief Enable memory watcher.
  */
+#ifndef AT_MEM_WATCH_EN
 #define AT_MEM_WATCH_EN     1u
+#endif
   
 /**
  *@brief Maximum memory usage limit (Valid when AT_MEM_WATCH_EN is enabled)
  */
+#ifndef AT_MEM_LIMIT_SIZE
 #define AT_MEM_LIMIT_SIZE   (3 * 1024)
+#endif
 
 /**
  *@brief Enable AT work context interfaces.

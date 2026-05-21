@@ -59,6 +59,8 @@ target_include_directories(bareos_plb PRIVATE
 target_compile_definitions(bareos_plb PRIVATE
     PC_BUILD=1
     XY_LOG_LEVEL=3
+    AT_MEM_WATCH_EN=0
+    AT_MEM_LIMIT_SIZE=65536
 )
 
 set(PLB_COMMON_SRCS
@@ -75,7 +77,23 @@ add_executable(bareos_plb_tests
     tests/test_plb_flow.c
 )
 
+add_executable(bareos_plb_cell_backend_tests
+    ${PLB_COMMON_SRCS}
+    tests/test_plb_cell_backend.c
+)
+
 target_include_directories(bareos_plb_tests PRIVATE
+    src
+    ${COMP}/clib
+    ${COMP}/log
+    ${COMP}/mem
+    ${COMP}/at/include
+    ${COMP}/cell
+    ${COMP}/gnss
+    ${COMP}/storage/evtlog
+)
+
+target_include_directories(bareos_plb_cell_backend_tests PRIVATE
     src
     ${COMP}/clib
     ${COMP}/log
@@ -89,6 +107,16 @@ target_include_directories(bareos_plb_tests PRIVATE
 target_compile_definitions(bareos_plb_tests PRIVATE
     PC_BUILD=1
     XY_LOG_LEVEL=3
+    AT_MEM_WATCH_EN=0
+    AT_MEM_LIMIT_SIZE=65536
+)
+
+target_compile_definitions(bareos_plb_cell_backend_tests PRIVATE
+    PC_BUILD=1
+    XY_LOG_LEVEL=3
+    AT_MEM_WATCH_EN=0
+    AT_MEM_LIMIT_SIZE=65536
 )
 
 add_test(NAME bareos_plb_flow COMMAND bareos_plb_tests)
+add_test(NAME bareos_plb_cell_backend COMMAND bareos_plb_cell_backend_tests)
