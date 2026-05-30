@@ -1,0 +1,16 @@
+#ifndef PLB_CONFIG_H
+#define PLB_CONFIG_H
+
+#define PLB_COMM_BACKEND_MOCK  1
+#define PLB_COMM_BACKEND_CELL  2
+
+#ifndef PLB_COMM_BACKEND
+#define PLB_COMM_BACKEND  PLB_COMM_BACKEND_MOCK
+#endif
+
+#if (PLB_COMM_BACKEND != PLB_COMM_BACKEND_MOCK) && \
+    (PLB_COMM_BACKEND != PLB_COMM_BACKEND_CELL)
+#error "Unsupported PLB_COMM_BACKEND"
+#endif
+
+#endif /* PLB_CONFIG_H */

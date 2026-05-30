@@ -1,5 +1,11 @@
 #include "plb_comm.h"
 
+#include "plb_config.h"
+
+#if PLB_COMM_BACKEND == PLB_COMM_BACKEND_CELL
+#include "plb_comm_cell_backend.h"
+#endif
+
 #include "xy_log.h"
 #include "xy_stdio.h"
 #include "xy_string.h"
@@ -20,8 +26,12 @@ void plb_comm_init(void)
     s_done = 0;
     s_ok = 0;
     s_result = PLB_COMM_RESULT_OK;
+#if PLB_COMM_BACKEND == PLB_COMM_BACKEND_MOCK
     plb_comm_mock_backend_init();
     s_backend = plb_comm_mock_backend();
+#elif PLB_COMM_BACKEND == PLB_COMM_BACKEND_CELL
+    s_backend = plb_comm_cell_backend();
+#endif
 }
 
 bool plb_comm_start_distress_send(const xy_gnss_pos_t *pos, uint8_t attempt)
