@@ -1,0 +1,5 @@
+r
+loadfile build/PLB.hex
+r
+g
+qc
