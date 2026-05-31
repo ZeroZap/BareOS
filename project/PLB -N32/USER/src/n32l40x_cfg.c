@@ -4,6 +4,7 @@
  */
 
  #include "n32l40x_cfg.h"
+#include <stdio.h>
 /* NTFx CODE START */
 __IO uint32_t mwTick;
 void SysTick_Delayms(uint32_t Delayms)
@@ -51,6 +52,40 @@ void SysTick_Delayms(uint32_t Delayms)
     DMAChx->MADDR = memAddr;
  }
 /* NTFx CODE END */
+
+void n32_debug_log_char(char ch)
+{
+    if (ch == '\n') {
+        n32_debug_log_char('\r');
+    }
+
+    while (USART_GetFlagStatus(UART4, USART_FLAG_TXDE) == RESET) {
+    }
+    USART_SendData(UART4, (uint16_t)ch);
+}
+
+void xy_log_char(char ch)
+{
+    n32_debug_log_char(ch);
+}
+
+int fputc(int ch, FILE *f)
+{
+    (void)f;
+    n32_debug_log_char((char)ch);
+    return ch;
+}
+
+int _write(int file, char *ptr, int len)
+{
+    int i;
+
+    (void)file;
+    for (i = 0; i < len; i++) {
+        n32_debug_log_char(ptr[i]);
+    }
+    return len;
+}
 
 /* NTFx CODE START */
 /**
@@ -488,8 +523,8 @@ bool USART_Configuration(void)
     USART_Init(UART4, &USART_InitStructure);
      
      
-    /* Enable UART4 IDLEF interrupt*/
-    USART_ConfigInt(UART4,USART_INT_IDLEF,ENABLE);
+    /* UART4 is reserved for blocking debug log output on PB0/PB1. */
+    USART_ConfigInt(UART4,USART_INT_IDLEF,DISABLE);
     /* Enable the UART4 */
     USART_Enable(UART4, ENABLE);
      
