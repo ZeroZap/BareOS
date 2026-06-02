@@ -11,6 +11,8 @@
 #include <stdint.h>
 /* NTFx CODE END Include*/
 
+void plb_algo_demo_run(void);
+
 /**
  * @brief  Main program.
  */
@@ -23,6 +25,7 @@ int main(void)
     USART_Configuration();
     xy_log_init();
     xy_log_i("PLB-N32 UART4 log ready");
+    plb_algo_demo_run();
     LPTIM_Configuration();
     RTC_Configuration();
     IWDG_Configuration();

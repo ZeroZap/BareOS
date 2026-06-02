@@ -87,11 +87,16 @@ C_INCS += $(HAL_DIR)/n32l40x_usbfs_driver/inc
 C_INCS += $(COMPONENTS_DIR)/clib
 C_INCS += $(COMPONENTS_DIR)/log
 C_INCS += $(COMPONENTS_DIR)/mem
+C_INCS += $(COMPONENTS_DIR)/crypto/inc
 ## NTFx CODE END C includes ##
 
 INCS_OBJS_DIR = $(foreach DIR2, $(C_INCS), $(wildcard $(DIR2)/*.h))
 INCS_OBJS_PATH = $(sort $(dir $(INCS_OBJS_DIR)))
 C_INCLUDES = $(addprefix -I,$(INCS_OBJS_PATH))
+
+CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_aes.c
+CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_sha256_hmac.c
+C_SOURCES += $(CRYPTO_SOURCES)
 
 ######################################
 # Lib files
