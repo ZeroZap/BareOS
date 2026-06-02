@@ -24,6 +24,7 @@ BUILD_DIR = build
 # HAL path
 #######################################
 HAL_DIR ?= ../../../hal/Hal-N32L40x
+COMPONENTS_DIR ?= ../../../components
 
 #####################################
 # chip platform info
@@ -62,6 +63,8 @@ C_DIRS += $(HAL_DIR)/CMSIS/core
 C_DIRS += $(HAL_DIR)/CMSIS/device
 C_DIRS += $(HAL_DIR)/n32l40x_std_periph_driver/src
 C_DIRS += $(HAL_DIR)/n32l40x_usbfs_driver/src
+C_DIRS += $(COMPONENTS_DIR)/clib
+C_DIRS += $(COMPONENTS_DIR)/log
 ## NTFx CODE END C sources ##
 
 SRC_OBJS_DIRS += $(foreach DIR, $(C_DIRS), $(wildcard $(DIR)/*.c))
@@ -81,6 +84,9 @@ C_INCS += $(HAL_DIR)/CMSIS/core
 C_INCS += $(HAL_DIR)/CMSIS/device
 C_INCS += $(HAL_DIR)/n32l40x_std_periph_driver/inc
 C_INCS += $(HAL_DIR)/n32l40x_usbfs_driver/inc
+C_INCS += $(COMPONENTS_DIR)/clib
+C_INCS += $(COMPONENTS_DIR)/log
+C_INCS += $(COMPONENTS_DIR)/mem
 ## NTFx CODE END C includes ##
 
 INCS_OBJS_DIR = $(foreach DIR2, $(C_INCS), $(wildcard $(DIR2)/*.h))
@@ -178,7 +184,7 @@ clean:
 PYOCD ?= D:/ETools/pyocd/pyocd.exe
 PYOCD_PACK ?= Nationstech.N32L40x_DFP.1.4.0.pack
 PYOCD_TARGET ?= n32l406cb
-PYOCD_FREQ ?= 4000000
+PYOCD_FREQ ?= 400000
 
 flash: all
 	@if not exist "$(PYOCD)" (echo pyOCD not found: $(PYOCD) && echo Install pyOCD or run: make flash PYOCD=path/to/pyocd.exe && exit /b 1)

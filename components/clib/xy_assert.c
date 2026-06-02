@@ -7,6 +7,7 @@
 
 #include "xy_assert.h"
 #include "xy_stdio.h"
+#include <stddef.h>
 
 /* Global assertion handler */
 static xy_assert_handler_t g_assert_handler = NULL;

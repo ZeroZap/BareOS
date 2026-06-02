@@ -6,6 +6,7 @@
  // Code cannot be added between /* NTFx CODE START xxxxx*/ and /* NTFx CODE END xxxxx*/
 /* NTFx CODE START Include*/
 #include "main.h"
+#include "xy_log.h"
 #include <stdio.h>
 #include <stdint.h>
 /* NTFx CODE END Include*/
@@ -20,7 +21,8 @@ int main(void)
     GPIO_Configuration();
     NVIC_Configuration();
     USART_Configuration();
-    n32_debug_log_write("UUUU PLB-N32 UART4 log ready\r\n");
+    xy_log_init();
+    xy_log_i("PLB-N32 UART4 log ready");
     LPTIM_Configuration();
     RTC_Configuration();
     IWDG_Configuration();
@@ -32,7 +34,7 @@ int main(void)
     /* NTFx CODE END Config*/
     while(1)
     {
-        n32_debug_log_write("UUUU PLB-N32 UART4 heartbeat\r\n");
+        xy_log_i("PLB-N32 UART4 heartbeat");
         SysTick_Delayms(1000);
     }
 }
