@@ -26,6 +26,9 @@ typedef enum {
 extern void SysTick_Delayms(uint32_t Delayms);
 extern void DMA_SetPerMemAddr(DMA_ChannelType* DMAChx, uint32_t periphAddr,uint32_t memAddr,uint32_t bufSize );
 extern void n32_debug_log_char(char ch);
+extern void n32_debug_log_write(const char *str);
+extern volatile uint32_t g_n32_debug_log_tx_count;
+extern volatile uint8_t g_n32_debug_log_last_char;
 extern bool RCC_Configuration(void);
 extern bool NVIC_Configuration(void);
 extern bool DMA_Configuration(void);

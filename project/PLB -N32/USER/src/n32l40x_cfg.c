@@ -7,6 +7,8 @@
 #include <stdio.h>
 /* NTFx CODE START */
 __IO uint32_t mwTick;
+volatile uint32_t g_n32_debug_log_tx_count;
+volatile uint8_t g_n32_debug_log_last_char;
 void SysTick_Delayms(uint32_t Delayms)
 {
     uint32_t tickstart = mwTick;
@@ -62,6 +64,15 @@ void n32_debug_log_char(char ch)
     while (USART_GetFlagStatus(UART4, USART_FLAG_TXDE) == RESET) {
     }
     USART_SendData(UART4, (uint16_t)ch);
+    g_n32_debug_log_last_char = (uint8_t)ch;
+    g_n32_debug_log_tx_count++;
+}
+
+void n32_debug_log_write(const char *str)
+{
+    while (*str != '\0') {
+        n32_debug_log_char(*str++);
+    }
 }
 
 void xy_log_char(char ch)
@@ -96,6 +107,7 @@ int _write(int file, char *ptr, int len)
 bool RCC_Configuration(void)
 {
     ErrorStatus ClockStatus;
+    uint32_t timeout;
     RCC_DeInit();
     RCC_ConfigHclk(RCC_SYSCLK_DIV1);
     RCC_ConfigPclk2(RCC_HCLK_DIV4);
@@ -106,10 +118,9 @@ bool RCC_Configuration(void)
     ClockStatus = RCC_WaitHsiStable();
     if (ClockStatus != SUCCESS) return false;
      
+    /* PLB-N32 uses HSI PLL: 16MHz / 2 * 12 / 2 = 48MHz SYSCLK.
+     * HSE is not used, so do not wait for HSERDF after disabling it. */
     RCC_ConfigHse(RCC_HSE_DISABLE);
-    /* Wait till HSE is ready */
-    ClockStatus = RCC_WaitHseStable();
-    if (ClockStatus != SUCCESS) return false;
      
     /* Enable PWR peripheral clock */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_PWR, ENABLE);
@@ -122,8 +133,9 @@ bool RCC_Configuration(void)
     while (RCC_GetFlagStatus(RCC_CTRLSTS_FLAG_LSIRD) == RESET);
      
     RCC_ConfigLse(RCC_LSE_ENABLE,0x1FF);
-    /* Wait till LSE is ready */
-    while (RCC_GetFlagStatus(RCC_LDCTRL_FLAG_LSERD) != SET);
+    /* Do not block UART bring-up forever if the 32.768 kHz crystal is absent or slow. */
+    timeout = 0x20000U;
+    while ((RCC_GetFlagStatus(RCC_LDCTRL_FLAG_LSERD) != SET) && (timeout-- > 0U));
      
     RCC_ConfigPll(RCC_PLL_HSI_PRE_DIV2,RCC_PLL_MUL_12,RCC_PLLDIVCLK_ENABLE);
     /* Enable PLL */
@@ -153,7 +165,11 @@ bool RCC_Configuration(void)
     RCC_EnableRETPeriphClk(RCC_RET_PERIPH_LPTIM,ENABLE);
      
     /*config RTC clock*/
-    RCC_ConfigRtcClk(RCC_RTCCLK_SRC_HSE_DIV32);
+    if (RCC_GetFlagStatus(RCC_LDCTRL_FLAG_LSERD) == SET) {
+        RCC_ConfigRtcClk(RCC_RTCCLK_SRC_LSE);
+    } else {
+        RCC_ConfigRtcClk(RCC_RTCCLK_SRC_LSI);
+    }
     RCC_EnableRtcClk(ENABLE);
      
     /*config USB clock*/

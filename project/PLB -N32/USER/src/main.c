@@ -20,6 +20,7 @@ int main(void)
     GPIO_Configuration();
     NVIC_Configuration();
     USART_Configuration();
+    n32_debug_log_write("UUUU PLB-N32 UART4 log ready\r\n");
     LPTIM_Configuration();
     RTC_Configuration();
     IWDG_Configuration();
@@ -31,7 +32,8 @@ int main(void)
     /* NTFx CODE END Config*/
     while(1)
     {
-
+        n32_debug_log_write("UUUU PLB-N32 UART4 heartbeat\r\n");
+        SysTick_Delayms(1000);
     }
 }
 
