@@ -12,6 +12,8 @@ volatile uint8_t g_n32_debug_log_last_char;
 void SysTick_Delayms(uint32_t Delayms)
 {
     uint32_t tickstart = mwTick;
+    uint32_t last_tick = tickstart;
+    uint32_t stalled_loops = 0;
     uint32_t wait=Delayms;
     /* Add 1 to guarantee minimum wait */
     if (wait < 0xFFFFFFFFU)
@@ -20,6 +22,13 @@ void SysTick_Delayms(uint32_t Delayms)
     }
     while ((mwTick - tickstart) < wait)
     {
+        IWDG_ReloadKey();
+        if (mwTick != last_tick) {
+            last_tick = mwTick;
+            stalled_loops = 0;
+        } else if (++stalled_loops >= 2000000U) {
+            break;
+        }
     }
 }
  /**
@@ -181,6 +190,7 @@ bool RCC_Configuration(void)
     while (RCC_GetSysclkSrc() != 0x0c) ;
     /*  Configure the SysTick to have interrupt in 1ms time basis*/
     SysTick_Config(48000);
+    NVIC_SetPriority(SysTick_IRQn, 0);
 /* NTFx CODE END */
     return true;
 }
@@ -202,49 +212,49 @@ bool NVIC_Configuration(void)
     
     /*Set EXTI1  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =EXTI1_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     
     /*Set DMA_Channel1  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =DMA_Channel1_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     
     /*Set USB_LP  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =USB_LP_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     
     /*Set USART1  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =USART1_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     
     /*Set USART2  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =USART2_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     
     /*Set USBWakeUp  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =USBWakeUp_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     
     /*Set UART4  interrupt priority*/
     NVIC_InitStructure.NVIC_IRQChannel                   =UART4_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =0;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority =8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        =0;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
@@ -603,6 +613,13 @@ bool RTC_Configuration(void)
  */
 bool IWDG_Configuration(void)
 {
+    IWDG_WriteConfig(IWDG_WRITE_ENABLE);
+    IWDG_SetPrescalerDiv(IWDG_PRESCALER_DIV256);
+    IWDG_CntReload(0x0fff);
+    while (IWDG_GetStatus(IWDG_PVU_FLAG) == SET || IWDG_GetStatus(IWDG_CRVU_FLAG) == SET) {
+    }
+    IWDG_ReloadKey();
+    IWDG_WriteConfig(IWDG_WRITE_DISABLE);
 /* NTFx CODE END */
     return true;
 }

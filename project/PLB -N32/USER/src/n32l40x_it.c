@@ -6,12 +6,14 @@
 /* NTFx CODE START */
 #include "n32l40x_it.h"
 #include "n32l40x.h"
+#include "n32l40x_iwdg.h"
 #include "usb_istr.h"
 #include "usb_int.h"
 /* NTFx CODE END */
 
 /* NTFx CODE START */
 extern __IO uint32_t mwTick;
+extern void n32_debug_log_write(const char *str);
 /**
  * @brief  This function handles NMI exception.
  */
@@ -26,9 +28,11 @@ void NMI_Handler(void)
  */
 void HardFault_Handler(void)
 {
+    n32_debug_log_write("\r\n[FAULT] HardFault\r\n");
     /* Go to infinite loop when Hard Fault exception occurs */
     while (1)
     {
+        IWDG_ReloadKey();
     /* NTFx CODE END */
 
     }
@@ -39,9 +43,11 @@ void HardFault_Handler(void)
  */
 void MemManage_Handler(void)
 {
+    n32_debug_log_write("\r\n[FAULT] MemManage\r\n");
     /* Go to infinite loop when Memory Manage exception occurs */
     while (1)
     {
+        IWDG_ReloadKey();
 /* NTFx CODE END */
 
     }
@@ -52,9 +58,11 @@ void MemManage_Handler(void)
  */
 void BusFault_Handler(void)
 {
+    n32_debug_log_write("\r\n[FAULT] BusFault\r\n");
     /* Go to infinite loop when Bus Fault exception occurs */
     while (1)
     {
+        IWDG_ReloadKey();
 /* NTFx CODE END */
 
     }
@@ -65,9 +73,11 @@ void BusFault_Handler(void)
  */
 void UsageFault_Handler(void)
 {
+    n32_debug_log_write("\r\n[FAULT] UsageFault\r\n");
     /* Go to infinite loop when Usage Fault exception occurs */
     while (1)
     {
+        IWDG_ReloadKey();
 /* NTFx CODE END */
 
     }
