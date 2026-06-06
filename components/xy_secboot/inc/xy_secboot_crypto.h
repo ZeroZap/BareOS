@@ -21,6 +21,9 @@ extern "C" {
 #define XY_SECBOOT_MAC_MAX_SIZE        64u
 #define XY_SECBOOT_KEY_ID_MAX_SIZE     16u
 #define XY_SECBOOT_NONCE_MAX_SIZE      16u
+#define XY_SECBOOT_HASH_CTX_MAX_SIZE   256u
+#define XY_SECBOOT_MANIFEST_MAGIC      0x54425358u /* 'XSBT' */
+#define XY_SECBOOT_MANIFEST_VERSION    1u
 
 /* ==================== Status Codes ==================== */
 
@@ -178,6 +181,7 @@ typedef struct {
 } xy_secboot_crypto_ops_t;
 
 const xy_secboot_suite_t *xy_secboot_get_suite(void);
+void xy_secboot_set_crypto_ops(const xy_secboot_crypto_ops_t *ops);
 const xy_secboot_crypto_ops_t *xy_secboot_get_crypto_ops(void);
 
 #ifdef __cplusplus
