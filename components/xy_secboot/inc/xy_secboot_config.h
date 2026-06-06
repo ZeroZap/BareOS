@@ -67,12 +67,42 @@ extern "C" {
 
 /* ==================== Partition Defaults ==================== */
 
+#define XY_SECBOOT_CFG_SLOT_SINGLE                 0u
+#define XY_SECBOOT_CFG_SLOT_SINGLE_WITH_STAGING    1u
+#define XY_SECBOOT_CFG_SLOT_AB_INTERNAL            2u
+#define XY_SECBOOT_CFG_SLOT_AB_MIXED               3u
+#define XY_SECBOOT_CFG_SLOT_AB_EXTERNAL            4u
+#define XY_SECBOOT_CFG_SLOT_SWAP                   5u
+
+#define XY_SECBOOT_CFG_DOWNLOAD_NONE               0u
+#define XY_SECBOOT_CFG_DOWNLOAD_UART               1u
+#define XY_SECBOOT_CFG_DOWNLOAD_USB                2u
+#define XY_SECBOOT_CFG_DOWNLOAD_CELLULAR           3u
+#define XY_SECBOOT_CFG_DOWNLOAD_SATELLITE          4u
+#define XY_SECBOOT_CFG_DOWNLOAD_EXTERNAL_FLASH     5u
+
 #ifndef XY_SECBOOT_PARTITION_ALIGNMENT
 #define XY_SECBOOT_PARTITION_ALIGNMENT 4096u
 #endif
 
 #ifndef XY_SECBOOT_ENABLE_AB_SLOT
 #define XY_SECBOOT_ENABLE_AB_SLOT 1u
+#endif
+
+#ifndef XY_SECBOOT_SLOT_MODE
+#define XY_SECBOOT_SLOT_MODE XY_SECBOOT_CFG_SLOT_SINGLE
+#endif
+
+#ifndef XY_SECBOOT_DOWNLOAD_CHANNEL
+#define XY_SECBOOT_DOWNLOAD_CHANNEL XY_SECBOOT_CFG_DOWNLOAD_UART
+#endif
+
+#ifndef XY_SECBOOT_ENABLE_EXTERNAL_FLASH_SLOT
+#define XY_SECBOOT_ENABLE_EXTERNAL_FLASH_SLOT 0u
+#endif
+
+#ifndef XY_SECBOOT_ENABLE_SWAP_PARTITION
+#define XY_SECBOOT_ENABLE_SWAP_PARTITION 0u
 #endif
 
 #ifdef __cplusplus

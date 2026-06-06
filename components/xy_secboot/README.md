@@ -13,8 +13,10 @@ It does not implement cryptographic algorithms directly. Backends may come from 
 | `inc/xy_secboot_config.h` | Suite selection and resource limits |
 | `inc/xy_secboot_crypto.h` | Algorithm IDs, manifest format, crypto backend ops |
 | `inc/xy_secboot_partition.h` | Partition descriptors and range-check interface |
+| `inc/xy_secboot_single_slot.h` | Single-slot boot and UART streaming update interface |
 | `docs/SECBOOT_CRYPTO_POLICY.md` | Algorithm suite policy and PLB GM defaults |
 | `docs/PARTITION_POLICY.md` | Single-slot, A/B, rollback, and PLB partition guidance |
+| `docs/SINGLE_SLOT_BOOT.md` | First-stage single-slot sec-boot flow |
 
 ## Default Policy
 

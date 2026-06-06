@@ -13,10 +13,13 @@ Security algorithms cannot replace partition isolation. The bootloader must be w
 | Bootloader | Yes | Read-only after provisioning | Root of trust, public keys, boot policy |
 | Boot state | Recommended | Bootloader write, App restricted | Pending/confirmed slot state, boot attempt counter |
 | Rollback counter | Yes | Bootloader write only | Monotonic accepted security version |
+| Download manifest | Optional | Bootloader write | Metadata for downloaded image in staging storage |
+| Download image | Optional | Bootloader write | UART/cellular/satellite downloaded image before activation |
 | App A manifest | Yes | Bootloader read/write during update | Signed metadata for slot A |
 | App A image | Yes | Bootloader read/write during update | Primary or confirmed application |
 | App B manifest | Recommended | Bootloader read/write during update | Signed metadata for slot B |
 | App B image | Recommended | Bootloader read/write during update | Update and recovery application |
+| Swap | Optional | Bootloader write only | Temporary copy area for swap-based update |
 | Model manifest | Optional | Bootloader/App controlled | Model metadata, MAC, nonce, version |
 | Model image | Optional | Encrypted or authenticated | Model weights/rules |
 | Param/FEE | Product-specific | App write | Device parameters, not trusted for rollback |
@@ -62,6 +65,33 @@ Single-slot rules:
 | Update rollback counter | Only after image verification and activation decision |
 | Power loss | Must leave at least one bootable image or enter recovery mode |
 | Recovery | UART/USB/4G recovery command should be available |
+
+Single-slot is the first implementation target. See `SINGLE_SLOT_BOOT.md` for the UART recovery flow and state record.
+
+## Download Channels
+
+The download path is independent from the activation policy.
+
+| Channel | Typical Storage | Bootloader Role | Notes |
+|---|---|---|---|
+| UART | Direct to active slot or staging | Receiver and verifier | Smallest implementation, best first step |
+| USB | Direct to active slot or staging | Receiver and verifier | Similar to UART with larger packets |
+| Cellular | External Flash or modem storage | Verify and activate | App usually downloads, bootloader verifies later |
+| Satellite | External Flash or modem storage | Verify and activate | Slow link, chunk resume is important |
+| Factory programmer | Direct Flash programming | Verify on first boot | Production path, still needs signed image |
+
+For IoT devices, wireless download usually happens in the application and writes the new image to external Flash or a modem file system. The bootloader should treat that storage as untrusted staging and verify the image before activation.
+
+## Slot Modes
+
+| Mode | Storage Layout | Pros | Cons | Best Use |
+|---|---|---|---|---|
+| Single slot | App only in internal Flash | Minimum Flash and RAM | App can be erased during update | Tiny devices with UART recovery |
+| Single slot + staging | Internal App + external/internal staging | Safer than direct overwrite | Needs copy/activate step | IoT devices with external NOR or modem storage |
+| A/B internal | App A and App B both internal | Strong recovery, simple boot | High internal Flash cost | Resource-rich MCU |
+| A/B mixed | App A internal, App B external | Saves internal Flash, supports wireless staging | External B usually cannot execute directly | IoT devices with external NOR |
+| A/B external | Both slots external | Large image capacity | Requires verified XIP or copy-to-RAM/internal | External-Flash-centric products |
+| Swap | Active + inactive/staging + swap | Can preserve old image during copy | Complex and power-loss sensitive | When active slot address must stay fixed |
 
 ## Recommended A/B Layout
 
@@ -126,6 +156,128 @@ Update sequence:
 | 7 | Bootloader verifies pending slot |
 | 8 | App marks itself `confirmed` after stable startup |
 | 9 | Bootloader updates rollback counter only after policy allows it |
+
+## Mixed Internal/External A/B Layout
+
+This is common for IoT products where internal MCU Flash is small but external NOR Flash is available.
+
+```text
+Internal MCU Flash:
++----------------------+  MCU Flash base
+| Bootloader           |  write-protected
++----------------------+
+| Boot state           |  bootloader private
++----------------------+
+| Rollback records     |  OTP/private Flash
++----------------------+
+| App A manifest       |  active internal image metadata
++----------------------+
+| App A image          |  executable active image
++----------------------+
+| Param/FEE/Evtlog     |
++----------------------+  MCU Flash end
+
+External Flash:
++----------------------+  External Flash base
+| Download manifest    |  written by App or bootloader
++----------------------+
+| App B manifest       |  candidate image metadata
++----------------------+
+| App B image          |  candidate image, untrusted until verified
++----------------------+
+| Model image          |  optional
++----------------------+  External Flash end
+```
+
+Activation choices:
+
+| Choice | Behavior | Requirement |
+|---|---|---|
+| Copy B to A | Verify external B, erase internal A, copy B into A, verify A, boot A | Bootloader can read external Flash and program internal Flash |
+| XIP B | Verify external B, boot from external Flash | MCU supports secure external XIP and remap/vector setup |
+| Recovery B | Keep B as recovery/update image only | Internal A remains normal executable slot |
+
+Recommended for small IoT MCUs:
+
+```text
+App downloads image over cellular/satellite into external Flash
+Bootloader verifies external B
+Bootloader copies verified B into internal A
+Bootloader verifies internal A again
+Bootloader boots internal A
+```
+
+Rules:
+
+| Rule | Reason |
+|---|---|
+| External Flash is never trusted | It is easier to modify or corrupt |
+| Keys stay internal | External Flash must not contain plaintext keys |
+| Verify before copy | Avoid writing malicious data into active slot |
+| Verify after copy | Catch copy/power/Flash errors |
+| Manifest written last | Prevent partial download from looking valid |
+
+## Full Internal A/B Layout
+
+Use this when MCU Flash is large enough for two complete application images.
+
+```text
++----------------------+  Internal Flash base
+| Bootloader           |
++----------------------+
+| Boot state           |
++----------------------+
+| Rollback records     |
++----------------------+
+| App A manifest       |
++----------------------+
+| App A image          |
++----------------------+
+| App B manifest       |
++----------------------+
+| App B image          |
++----------------------+
+| Param/FEE/Evtlog     |
++----------------------+  Internal Flash end
+```
+
+This is the cleanest field update design. The bootloader can boot either slot directly after verification, with no copy step.
+
+## Swap-Based Layout
+
+Swap is useful when the application must always run from a fixed address, but a second image can be staged elsewhere.
+
+```text
++----------------------+  Internal Flash base
+| Bootloader           |
++----------------------+
+| Boot state           |
++----------------------+
+| Rollback records     |
++----------------------+
+| Active App manifest  |
++----------------------+
+| Active App image     |  fixed execution address
++----------------------+
+| Download manifest    |  internal or external
++----------------------+
+| Download image       |  internal or external
++----------------------+
+| Swap area            |  at least one erase page, preferably larger
++----------------------+
+```
+
+Swap rules:
+
+| Rule | Requirement |
+|---|---|
+| Chunk granularity | Align to erase page |
+| State tracking | Record source offset, destination offset, phase, CRC |
+| Power loss recovery | Resume or roll forward, never guess |
+| Verification | Verify download before swap and active image after swap |
+| Rollback counter | Update only after active image verifies |
+
+Swap is not the first implementation target because the state machine is harder to make power-loss safe.
 
 ## Boot State Record
 
@@ -204,6 +356,18 @@ If application or model assets live in external NOR Flash:
 | Use anti-rollback internally | External Flash cannot be trusted for monotonic state |
 
 For XIP from external Flash, verify the full image before enabling execution. If full verification time is unacceptable, keep a small internal recovery app that can re-verify and repair the external image.
+
+## Implementation Order
+
+Implement slot modes in this order:
+
+| Phase | Mode | Reason |
+|---:|---|---|
+| 1 | Single slot + UART recovery | Minimum resources, simplest trust boundary |
+| 2 | Single slot + external staging | Supports IoT wireless download without full A/B internal Flash |
+| 3 | Full internal A/B | Best recovery if MCU Flash is large enough |
+| 4 | Mixed internal/external A/B | Adds external Flash activation policy |
+| 5 | Swap | Most complex power-loss recovery |
 
 ## Alignment
 
