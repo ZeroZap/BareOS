@@ -33,6 +33,14 @@ TARGET_STARTUP  := n32l40x
 ## NTFx CODE START Define ##
 DEFS += -DN32L40X
 DEFS += -DUSE_STDPERIPH_DRIVER
+DEFS += -DXY_EEPROM_MAX_WRITE_UNIT=4
+DEFS += -DXY_EEPROM_MAX_RECORD_SIZE=16
+DEFS += -DXY_EEPROM_ENABLE_CRC16=1
+DEFS += -DAT_MAX_CMD_LEN=256
+DEFS += -DAT_LIST_WORK_COUNT=8
+DEFS += -DAT_WORK_STATIC_POOL_EN=1
+DEFS += -DAT_WORK_POOL_COUNT=8
+DEFS += -DAT_WORK_ITEM_DATA_SIZE=256
 ## NTFx CODE END Define ##
 ######################################
 # Algo libs
@@ -87,7 +95,10 @@ C_INCS += $(HAL_DIR)/n32l40x_usbfs_driver/inc
 C_INCS += $(COMPONENTS_DIR)/clib
 C_INCS += $(COMPONENTS_DIR)/log
 C_INCS += $(COMPONENTS_DIR)/mem
+C_INCS += $(COMPONENTS_DIR)/at/include
 C_INCS += $(COMPONENTS_DIR)/crypto/inc
+C_INCS += $(COMPONENTS_DIR)/storage/fee
+C_INCS += $(COMPONENTS_DIR)/storage/eeprom
 ## NTFx CODE END C includes ##
 
 INCS_OBJS_DIR = $(foreach DIR2, $(C_INCS), $(wildcard $(DIR2)/*.h))
@@ -97,6 +108,17 @@ C_INCLUDES = $(addprefix -I,$(INCS_OBJS_PATH))
 CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_aes.c
 CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_sha256_hmac.c
 C_SOURCES += $(CRYPTO_SOURCES)
+
+MEM_SOURCES += $(COMPONENTS_DIR)/mem/xy_mem.c
+C_SOURCES += $(MEM_SOURCES)
+
+AT_SOURCES += $(COMPONENTS_DIR)/at/src/at_chat.c
+AT_SOURCES += $(COMPONENTS_DIR)/at/src/at_port.c
+C_SOURCES += $(AT_SOURCES)
+
+STORAGE_SOURCES += $(COMPONENTS_DIR)/storage/fee/xy_fee_nano.c
+STORAGE_SOURCES += $(COMPONENTS_DIR)/storage/eeprom/xy_eeprom.c
+C_SOURCES += $(STORAGE_SOURCES)
 
 ######################################
 # Lib files

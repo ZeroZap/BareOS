@@ -14,6 +14,7 @@
 /* NTFx CODE START */
 extern __IO uint32_t mwTick;
 extern void n32_debug_log_write(const char *str);
+volatile unsigned int g_sys_tick_ms;
 /**
  * @brief  This function handles NMI exception.
  */
@@ -107,6 +108,7 @@ void DebugMon_Handler(void)
 void SysTick_Handler(void)
 {
     mwTick++;
+    g_sys_tick_ms++;
 /* NTFx CODE END */
 
 }

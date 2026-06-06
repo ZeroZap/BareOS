@@ -35,12 +35,39 @@
 /**
  *@brief Maximum AT command send data length (only for variable parameter commands).
  */
-#define AT_MAX_CMD_LEN    256     
+#ifndef AT_MAX_CMD_LEN
+#define AT_MAX_CMD_LEN    256
+#endif
 
 /**
  *@brief Maximum number of work in queue (limit memory usage).
  */
-#define AT_LIST_WORK_COUNT 32     
+#ifndef AT_LIST_WORK_COUNT
+#define AT_LIST_WORK_COUNT 8
+#endif
+
+/**
+ *@brief Use a fixed block pool for command work items instead of malloc/free.
+ */
+#ifndef AT_WORK_STATIC_POOL_EN
+#define AT_WORK_STATIC_POOL_EN 1u
+#endif
+
+/**
+ *@brief Number of global static work item blocks.
+ *       Increase this when multiple AT objects can queue work concurrently.
+ */
+#ifndef AT_WORK_POOL_COUNT
+#define AT_WORK_POOL_COUNT AT_LIST_WORK_COUNT
+#endif
+
+/**
+ *@brief Maximum copied payload bytes stored inside one static work item.
+ *       at_exec_cmd() needs AT_MAX_CMD_LEN; at_send_data() must not exceed this.
+ */
+#ifndef AT_WORK_ITEM_DATA_SIZE
+#define AT_WORK_ITEM_DATA_SIZE AT_MAX_CMD_LEN
+#endif
  
 /**
  *@brief Enable URC watcher.

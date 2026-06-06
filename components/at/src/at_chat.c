@@ -42,6 +42,14 @@
     #error "AT_LIST_WORK_COUNT cannot be less than 2"
 #endif
 
+#if AT_WORK_STATIC_POOL_EN && AT_WORK_ITEM_DATA_SIZE < AT_MAX_CMD_LEN
+    #error "AT_WORK_ITEM_DATA_SIZE must be >= AT_MAX_CMD_LEN when static pool is enabled"
+#endif
+
+#if AT_WORK_STATIC_POOL_EN && AT_WORK_POOL_COUNT < 2
+    #error "AT_WORK_POOL_COUNT cannot be less than 2 when static pool is enabled"
+#endif
+
 //Used to identify the validity of a work item.
 #define WORK_ITEM_TAG 0x2532
 
@@ -154,10 +162,22 @@ static const at_attr_t at_def_attr = {
 static void at_send_line(at_info_t *ai, const char *fmt, va_list args);
 static void *at_core_malloc(unsigned int nbytes);
 static void  at_core_free(void *ptr);
+static void *work_item_alloc(unsigned int nbytes);
+static void  work_item_free(void *ptr);
 
 #if AT_MEM_WATCH_EN 
 static unsigned int at_max_mem;          /* Maximum memory used*/
 static unsigned int at_cur_mem;          /* Currently used memory*/
+#endif
+
+#if AT_WORK_STATIC_POOL_EN
+typedef union {
+    unsigned long align;
+    unsigned char bytes[sizeof(work_item_t) + AT_WORK_ITEM_DATA_SIZE];
+} work_item_pool_block_t;
+
+static work_item_pool_block_t s_work_item_pool[AT_WORK_POOL_COUNT];
+static unsigned char s_work_item_used[AT_WORK_POOL_COUNT];
 #endif
 
 /**
@@ -339,7 +359,11 @@ static void do_at_callback(at_info_t *ai, work_item_t *wi, at_resp_code code)
 static work_item_t *work_item_create(int extend_size)
 {
     work_item_t *it;
-    it = at_core_malloc(sizeof(work_item_t) + extend_size);   
+    if (extend_size < 0) {
+        return NULL;
+    }
+    it = work_item_alloc((unsigned int)sizeof(work_item_t)
+                         + (unsigned int)extend_size);
     if (it != NULL)
         memset(it, 0, sizeof(work_item_t) + extend_size);
     return it;
@@ -353,7 +377,7 @@ static void work_item_destroy(work_item_t *it)
 {
     if (it != NULL) {
         it->magic = 0;
-        at_core_free(it);
+        work_item_free(it);
     }
 }
 
@@ -400,7 +424,7 @@ static work_item_t *create_work_item(at_info_t *ai, int type, const at_attr_t *a
         AT_DEBUG(ai, "Insufficient memory, list count:%d\r\n", ai->list_cnt);
         return NULL;
     }
-    if (ai->list_cnt > AT_LIST_WORK_COUNT) {
+    if (ai->list_cnt >= AT_LIST_WORK_COUNT) {
         AT_DEBUG(ai, "Work queue full\r\n");
         work_item_destroy(it);
         return NULL;
@@ -616,12 +640,7 @@ static int send_multiline_handler(at_info_t *ai)
 static void at_send_line(at_info_t *ai, const char *fmt, va_list args)
 {
     int len;
-    char *cmdline;
-    cmdline = at_core_malloc(AT_MAX_CMD_LEN);
-    if (cmdline == NULL) {
-        AT_DEBUG(ai, "Malloc failed when send...\r\n");
-        return;
-    }
+    char cmdline[AT_MAX_CMD_LEN];
     len = xy_vsnprintf(cmdline, AT_MAX_CMD_LEN, fmt, args);
     //Clear receive buffer.
     ai->recv_cnt = 0;
@@ -629,8 +648,6 @@ static void at_send_line(at_info_t *ai, const char *fmt, va_list args)
     send_data(ai, cmdline, len);
     send_data(ai, "\r\n", 2);
     AT_DEBUG(ai,"->\r\n%s\r\n", cmdline);
-
-    at_core_free(cmdline);
 }
 
 #if AT_URC_WARCH_EN
@@ -982,19 +999,13 @@ void at_attr_deinit(at_attr_t *attr)
  */
 bool at_exec_vcmd(at_obj_t *at, const at_attr_t *attr, const char *cmd, va_list va)
 {
-    char *buf;
+    char buf[AT_MAX_CMD_LEN];
     int len;
     void *workid = NULL;
-    buf = at_core_malloc(AT_MAX_CMD_LEN);
-    if (buf == NULL) {
-        AT_DEBUG(obj_map(at), "No memory when execute vcmd...\r\n");
-        return NULL;
-    }
     len = xy_vsnprintf(buf, AT_MAX_CMD_LEN, cmd, va);
     if (len > 0) {
         workid = add_work_item(obj_map(at), WORK_TYPE_CMD, attr, buf, len + 1);
     }
-    at_core_free(buf);
     return workid != NULL;
 }
 
@@ -1163,6 +1174,41 @@ static void  at_core_free(void *ptr)
 }
 
 #endif
+
+static void *work_item_alloc(unsigned int nbytes)
+{
+#if AT_WORK_STATIC_POOL_EN
+    if (nbytes > sizeof(s_work_item_pool[0].bytes)) {
+        return NULL;
+    }
+    for (unsigned int i = 0; i < AT_WORK_POOL_COUNT; i++) {
+        if (s_work_item_used[i] == 0u) {
+            s_work_item_used[i] = 1u;
+            return s_work_item_pool[i].bytes;
+        }
+    }
+    return NULL;
+#else
+    return at_core_malloc(nbytes);
+#endif
+}
+
+static void work_item_free(void *ptr)
+{
+#if AT_WORK_STATIC_POOL_EN
+    if (ptr == NULL) {
+        return;
+    }
+    for (unsigned int i = 0; i < AT_WORK_POOL_COUNT; i++) {
+        if (ptr == (void *)s_work_item_pool[i].bytes) {
+            s_work_item_used[i] = 0u;
+            return;
+        }
+    }
+#else
+    at_core_free(ptr);
+#endif
+}
 
 #if AT_WORK_CONTEXT_EN
 
