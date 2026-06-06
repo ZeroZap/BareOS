@@ -56,6 +56,8 @@ check anti-rollback counter
 
 ## UART Recovery Flow
 
+The first UART transport is specified in `UART_TRANSPORT_V1.md`.
+
 ```text
 enter recovery
   |

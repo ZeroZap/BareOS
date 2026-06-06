@@ -17,6 +17,7 @@ It does not implement cryptographic algorithms directly. Backends may come from 
 | `docs/SECBOOT_CRYPTO_POLICY.md` | Algorithm suite policy and PLB GM defaults |
 | `docs/PARTITION_POLICY.md` | Single-slot, A/B, rollback, and PLB partition guidance |
 | `docs/SINGLE_SLOT_BOOT.md` | First-stage single-slot sec-boot flow |
+| `docs/UART_TRANSPORT_V1.md` | First reliable UART download protocol |
 | `src/xy_secboot_guard.c` | Constant-time compare, secure zero, inverse checks |
 | `src/xy_secboot_partition.c` | Partition lookup and range checks |
 | `src/xy_secboot_policy.c` | Compile-time suite selection and backend registration |
