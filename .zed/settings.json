@@ -1,0 +1,34 @@
+{
+  "languages": {
+    "C": {
+      "language_servers": ["clangd"]
+    },
+    "C++": {
+      "language_servers": ["clangd"]
+    }
+  },
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "path": "clangd",
+        "arguments": [
+          "--background-index",
+          "--clang-tidy",
+          "--completion-style=detailed",
+          "--header-insertion=iwyu"
+        ]
+      },
+      "initialization_options": {
+        "fallbackFlags": [
+          "-std=c99",
+          "-DPC_BUILD=1",
+          "-DXY_LOG_LEVEL=3",
+          "-DAT_MEM_WATCH_EN=0",
+          "-DAT_MEM_LIMIT_SIZE=65536",
+          "-DN32L40X",
+          "-DUSE_STDPERIPH_DRIVER"
+        ]
+      }
+    }
+  }
+}
