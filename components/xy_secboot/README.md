@@ -15,6 +15,8 @@ It does not implement cryptographic algorithms directly. Backends may come from 
 | `inc/xy_secboot_partition.h` | Partition descriptors and range-check interface |
 | `inc/xy_secboot_single_slot.h` | Single-slot boot and UART streaming update interface |
 | `docs/SECBOOT_CRYPTO_POLICY.md` | Algorithm suite policy and PLB GM defaults |
+| `docs/SECBOOT_V1_DESIGN.md` | First executable secboot design target |
+| `docs/HOST_TOOLS_V1.md` | Host pack/flash/inspect tool plan |
 | `docs/PARTITION_POLICY.md` | Single-slot, A/B, rollback, and PLB partition guidance |
 | `docs/SINGLE_SLOT_BOOT.md` | First-stage single-slot sec-boot flow |
 | `docs/UART_TRANSPORT_V1.md` | First reliable UART download protocol |
