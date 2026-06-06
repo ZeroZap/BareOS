@@ -1,4 +1,4 @@
-# Prerequisites
+﻿# Prerequisites
 *.d
 
 # Object files
@@ -68,3 +68,7 @@ install_manifest.txt
 *.vcxproj
 *.vcxproj.filters
 *.sln
+
+# Extra
+MCU-SDK/
+components-ref/

@@ -135,6 +135,14 @@ typedef struct {
     bool auto_erase;                /**< 写入前自动擦除 */
 } eflash_config_t;
 
+typedef struct eflash_ops {
+    eflash_result_t (*read)(void *ctx, uint32_t address, uint8_t *data,
+                            size_t size);
+    eflash_result_t (*write)(void *ctx, uint32_t address, const uint8_t *data,
+                             size_t size);
+    eflash_result_t (*erase_page)(void *ctx, uint32_t page_index);
+} eflash_ops_t;
+
 /**
  * @brief Flash 句柄（多实例安全）
  *
@@ -144,9 +152,13 @@ typedef struct {
     eflash_config_t config;         /**< Flash 配置 */
     uint8_t *memory;                /**< 模拟 Flash 内存（用户提供） */
     bool *page_erased;              /**< 页擦除状态数组（用户提供） */
+    const eflash_ops_t *ops;        /**< 可选硬件 Flash 操作 */
+    void *ops_ctx;                  /**< 硬件操作上下文 */
     bool initialized;               /**< 初始化状态 */
     bool user_provided_buffer;       /**< 是否使用用户提供的 buffer */
 } eflash_handle_t;
+
+typedef eflash_handle_t eflash_t;
 
 /*==============================================================================
  * API 函数声明
@@ -165,9 +177,16 @@ typedef struct {
  * @note 适用于裸机环境，不使用 malloc
  */
 eflash_result_t eflash_init_with_buffer(eflash_handle_t *handle,
-                                         const eflash_config_t *config,
-                                         uint8_t *memory_buffer,
-                                         bool *page_erased_buffer);
+                                          const eflash_config_t *config,
+                                          uint8_t *memory_buffer,
+                                          bool *page_erased_buffer);
+
+eflash_result_t eflash_init_with_ops(eflash_handle_t *handle,
+                                      const eflash_config_t *config,
+                                      uint8_t *memory_base,
+                                      bool *page_erased_buffer,
+                                      const eflash_ops_t *ops,
+                                      void *ops_ctx);
 
 /**
  * @brief 初始化 Flash 设备（仅 PC 模拟器使用）
