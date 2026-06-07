@@ -18,6 +18,32 @@ volatile uint8_t g_n32_uart5_last_rx;
 static xy_rb_t s_uart5_rx_rb;
 static uint8_t s_uart5_rx_pool[128];
 
+static void usbfs_interrupts_config(void)
+{
+    NVIC_InitType NVIC_InitStructure;
+    EXTI_InitType EXTI_InitStructure;
+
+    NVIC_InitStructure.NVIC_IRQChannel = USB_LP_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 8;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+
+    NVIC_InitStructure.NVIC_IRQChannel = USBWakeUp_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 8;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+
+    EXTI_ClrITPendBit(EXTI_LINE17);
+    EXTI_InitStruct(&EXTI_InitStructure);
+    EXTI_InitStructure.EXTI_Line = EXTI_LINE17;
+    EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
+    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;
+    EXTI_InitStructure.EXTI_LineCmd = ENABLE;
+    EXTI_InitPeripheral(&EXTI_InitStructure);
+}
+
 static void n32_uart5_secboot_irq_enable(void)
 {
     NVIC_InitType NVIC_InitStructure;
@@ -309,6 +335,8 @@ bool RCC_Configuration(void)
     RCC_EnableRtcClk(ENABLE);
      
     /*config USB clock*/
+    RCC_ConfigUSBXTALESSMode(RCC_USBXTALESS_LESSMODE);
+    RCC_ConfigUCDRClk(RCC_UCDR300M_SRC_OSC300M, ENABLE);
     RCC_ConfigUsbClk(RCC_USBCLK_SRC_PLLCLK_DIV1);
      
     /* Select PLLCLK as system clock source */
@@ -499,10 +527,6 @@ bool GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Pull      = GPIO_No_Pull;
     GPIO_InitStructure.GPIO_Slew_Rate = GPIO_Slew_Rate_Low;
     GPIO_InitStructure.GPIO_Current   = GPIO_DC_2mA;
-    GPIO_InitStructure.GPIO_Alternate = GPIO_NO_AF;
-    GPIO_InitStructure.Pin            = GPIO_PIN_11 | GPIO_PIN_12;
-    GPIO_InitPeripheral(GPIOA,&GPIO_InitStructure);
-     
     GPIO_InitStructure.GPIO_Alternate = GPIO_AF0_SPI1;
     GPIO_InitStructure.Pin            = GPIO_PIN_7 | GPIO_PIN_6 | GPIO_PIN_5;
     GPIO_InitPeripheral(GPIOA,&GPIO_InitStructure);
@@ -771,6 +795,7 @@ bool USBFS_Configuration(void)
 {
     /* Enable the USB clock */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_USB, ENABLE);
+    usbfs_interrupts_config();
      
     /***************** USBFS configuration ***************/
     USB_Init();

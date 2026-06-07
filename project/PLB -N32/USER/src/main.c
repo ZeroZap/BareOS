@@ -50,6 +50,7 @@ int main(void)
     xy_log_i("PLB-N32 UART5 reserved for sec-boot development");
     plb_log_reset_flags();
     IWDG_Configuration();
+    USBFS_Configuration();
     xy_log_i("PLB-N32 FEE base=%x size=%x init=%d",
              (unsigned int)PLB_N32_FEE_BASE_ADDR,
              (unsigned int)PLB_N32_FEE_TOTAL_SIZE,
@@ -77,7 +78,6 @@ int main(void)
     LPTIM_Configuration();
     RTC_Configuration();
     ADC_Configuration();
-    USBFS_Configuration();
     SPI_Configuration();
     I2C_Configuration();
     DMA_Configuration();

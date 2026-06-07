@@ -25,23 +25,20 @@ typedef  struct TxRxDataProp
 typedef enum USBdeviceType_t
 {
     USB_VCP,
-    USB_MASS_STORAGE,
    USB_INVALID,
 }USBdeviceType;
 
 extern TxRxDataProp usbTxRxDataProp[2];
-#define USB_LOW_PWR_MGMT_SUPPORT
 
-#define  PACK_MAX_SIZE  0x200
+#define  PACK_MAX_SIZE  0x40
 /*-------------------------------------------------------------*/
 /* EP_NUM */
 /* defines how many endpoints are used by the device */
 /*-------------------------------------------------------------*/
-#define EP_NUM (6)
+#define EP_NUM (4)
 
 
 #define VCP_ENDP  ENDP3
-#define MASS_STORAGE_ENDP  ENDP4
 
 /*-------------------------------------------------------------*/
 /* --------------   Buffer Description Table  -----------------*/
@@ -60,10 +57,6 @@ extern TxRxDataProp usbTxRxDataProp[2];
 #define ENDP2_RX_BUF0Addr      (0x100)
 /* EP3buffer base address*/
 #define ENDP3_TX_BUF0Addr      (0x140)
-/* EP4buffer base address*/
-#define ENDP4_TX_BUF0Addr      (0x180)
-/* EP5buffer base address*/
-#define ENDP5_RX_BUF0Addr      (0x1C0)
 /*-------------------------------------------------------------*/
 /* -------------------   STS events  -------------------------*/
 /*-------------------------------------------------------------*/
@@ -71,19 +64,20 @@ extern TxRxDataProp usbTxRxDataProp[2];
 /* mask defining which events has to be handled */
 /* by the device application software */
 
-#define IMR_MSK (CTRL_CTRSM  | CTRL_WKUPM | CTRL_SUSPDM  | CTRL_SOFM \
-                 | CTRL_RSTM )
+#define IMR_MSK (CTRL_CTRSM | CTRL_RSTM)
 
 /* CTR service routines */
 /* associated to defined endpoints */
 #define EP1_IN_Callback USB_ProcessNop
 #define EP2_IN_Callback USB_ProcessNop
+#define EP4_IN_Callback USB_ProcessNop
 #define EP5_IN_Callback USB_ProcessNop
 #define EP6_IN_Callback USB_ProcessNop
 #define EP7_IN_Callback USB_ProcessNop
 #define EP1_OUT_Callback USB_ProcessNop
 #define EP3_OUT_Callback USB_ProcessNop
 #define EP4_OUT_Callback USB_ProcessNop
+#define EP5_OUT_Callback USB_ProcessNop
 #define EP6_OUT_Callback USB_ProcessNop
 #define EP7_OUT_Callback USB_ProcessNop
 

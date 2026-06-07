@@ -11,14 +11,14 @@ const uint8_t USBdevice_DeviceDescriptor[USB_DEIVCE_SIZ_DEVICE_DESC] = {
     USB_DEVICE_DESCRIPTOR_TYPE, /*bDescriptorType*/
     0x00,                       /*bcdUSB */
     0x02,
-    0xEF, /*bDeviceClass*/
-    0x02, /*bDeviceSubClass*/
-    0x01, /*bDeviceProtocol*/
+    USB_DEVICE_CLASS_CDC, /*bDeviceClass*/
+    0x00, /*bDeviceSubClass*/
+    0x00, /*bDeviceProtocol*/
     0x40, /*bMaxPacketSize40*/
-    0x00, /*idVendor*/
-    0x00,
-    0x00, /*idProduct*/
-    0x00,
+    0xF5, /*idVendor = 0x19F5*/
+    0x19,
+    0x40, /*idProduct = 0x5740*/
+    0x57,
     0x00, /*bcdDevice rel. 2.00*/
     0x02,
     1,   /*Index of string descriptor describing
@@ -38,23 +38,12 @@ const uint8_t USBdevice_ConfigDescriptor[USB_DEIVCE_SIZ_CONFIG_DESC] = {
     USB_DEIVCE_SIZ_CONFIG_DESC,
     /* wTotalLength: Bytes returned */
     0x00,
-    0x03, /* bNumInterfaces: 3 interface */
+    0x02, /* bNumInterfaces: 2 interface */
     0x01, /* bConfigurationValue: Configuration value */
     0x00, /* iConfiguration: Index of string descriptor describing
                          the configuration*/
     0xC0, /* bmAttributes: Self powered */
     0x32, /* MaxPower 100 mA: this current is used for detecting Vbus */
-    /* IAD */
-    /* Interface Association Descriptor */
-    USBD_IAD_DESC_SIZE,               // bLength
-    USBD_IAD_DESCRIPTOR_TYPE,         // bDescriptorType
-    0x00,                             // bFirstInterface 接口描述符是在总的配置描述符中的第几个从0开始数 1 
-    0x02,                             // bInterfaceCount 接口描述符数量 2
-    USB_DEVICE_CLASS_CDC,             // bFunctionClass    
-    0x02,             // bFunctionSubClass  Abstract Control Model
-    0x00,                             // bInterfaceProtocol  AT Commands: V.250 etc
-    0x00,                             // iFunction
-    
     /*USB CDC  interface descriptor*/
     /*Interface Descriptor*/
     USB_DEIVCE_NTERFACE_DESC_SIZE,   /* bLength: Interface Descriptor size */
@@ -128,36 +117,6 @@ const uint8_t USBdevice_ConfigDescriptor[USB_DEIVCE_SIZ_CONFIG_DESC] = {
     0x40,             /* wMaxPacketSize: */
     0x00,
     0x00,    /* bInterval */
-             
-    /*USB MASS storage  interface descriptor*/
-    USB_DEIVCE_NTERFACE_DESC_SIZE,   //bLength
-    USB_INTERFACE_DESCRIPTOR_TYPE,   //bDescriptorType
-    0x02, //bInterfaceNumber
-    0x00, //bAlternateSetting
-    0x02, //bNumEndpoints
-    USB_DEVICE_CLASS_MASS_STORAGE, //bInterfaceClass
-    0x06, //bInterfaceSubClass
-    0x50, //bInterfaceProtocol
-    4, //iConfiguration
-
-/* iInterface: */
-    /* 18 */
-    STANDARD_ENDPOINT_DESC_SIZE,   /*Endpoint descriptor length = 7*/
-    USB_ENDPOINT_DESCRIPTOR_TYPE,   /*Endpoint descriptor type */
-    0x84,   /*Endpoint address  */
-    USB_ENDPOINT_TYPE_BULK,   /*Bulk endpoint type */
-    0x40,   /*Maximum packet size ( 64bytes) */
-    0x00,
-    0x00,   /*Polling interval in milliseconds */
-
-    /* 25 */
-    STANDARD_ENDPOINT_DESC_SIZE,   /*Endpoint descriptor length = 7 */
-    USB_ENDPOINT_DESCRIPTOR_TYPE,   /*Endpoint descriptor type */
-    0x05,   /*Endpoint address  */
-    USB_ENDPOINT_TYPE_BULK,   /*Bulk endpoint type */
-    0x40,   /*Maximum packet size (64 bytes) */
-    0x00,
-    0x00,     /*Polling interval in milliseconds*/
         };        /* USBdevice_ConfigDescriptor */
 
 /* USB String Descriptors (optional) */

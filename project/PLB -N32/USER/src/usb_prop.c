@@ -8,11 +8,6 @@
 #include "usb_prop.h"
 #include "usb_desc.h"
 #include "usb_pwr.h"
- 
-#include "usb_storage_bot.h"
-#include "usb_storage_flash_driver.h"
-extern uint32_t Max_Lun;
-
 uint32_t ProtocolValue;
 __IO uint8_t EXTI_Enable;
 __IO uint8_t Request = 0;
@@ -119,7 +114,7 @@ void USBdevice_Reset(void)
     /* Initialize Endpoint 1 */
     USB_SetEpType(ENDP1, EP_INTERRUPT);
     USB_SetEpTxAddr(ENDP1, ENDP1_TX_BUF0Addr);
-    SetEPTxStatus(ENDP1, EP_TX_VALID);
+    SetEPTxStatus(ENDP1, EP_TX_NAK);
     SetEPRxStatus(ENDP1, EP_RX_DIS);
 
     /* Initialize Endpoint 2 */
@@ -133,29 +128,12 @@ void USBdevice_Reset(void)
     /* Initialize Endpoint 3 */
     USB_SetEpType(ENDP3, EP_BULK);
     USB_SetEpTxAddr(ENDP3, ENDP3_TX_BUF0Addr);
-    SetEPTxStatus(ENDP3, EP_TX_VALID);
+    SetEPTxStatus(ENDP3, EP_TX_NAK);
     SetEPRxStatus(ENDP3, EP_RX_DIS);
-
-    /* Initialize Endpoint 4 */
-    USB_SetEpType(ENDP4, EP_BULK);
-    USB_SetEpTxAddr(ENDP4, ENDP4_TX_BUF0Addr);
-    SetEPTxStatus(ENDP4, EP_TX_VALID);
-    SetEPRxStatus(ENDP4, EP_RX_DIS);
-
-    /* Initialize Endpoint 5 */
-    USB_SetEpType(ENDP5, EP_BULK);
-  
-    USB_SetEpRxAddr(ENDP5, ENDP5_RX_BUF0Addr);
-    USB_SetEpRxCnt(ENDP5, 0x40);
-    SetEPRxStatus(ENDP5, EP_RX_VALID);
-    SetEPTxStatus(ENDP5, EP_TX_DIS);
 
     /* Set this device to response on default address */
     USB_SetDeviceAddress(0);
     bDeviceState = ATTACHED;
-    CBW.dSignature = BOT_CBW_SIGNATURE;
-    Bot_State = BOT_IDLE;
-    MAL_Init(0);
 }
 /*******************************************************************************
  * Function Name  : USBdevice_SetConfiguration.
@@ -171,27 +149,7 @@ void USBdevice_SetConfiguration(void)
     {
         /* Device configured */
         bDeviceState = CONFIGURED;
-        /* Initialize Endpoint 4 */
-        USB_ClrDattogTx(ENDP4);
-
-        /* Initialize Endpoint 5 */
-        USB_ClrDattogRx(ENDP5);
-        Bot_State = BOT_IDLE; /* set the Bot state machine to the IDLE state */
     }
-}
-/*******************************************************************************
-* Function Name  : USBdevice_ClearFeature
-* Description    : Handle the ClearFeature request.
-* Input          : None.
-* Output         : None.
-* Return         : None.
-*******************************************************************************/
-void USBdevice_ClearFeature(void)
-{
-    /* when the host send a CBW with invalid signature or invalid length the two
-       Endpoints (IN & OUT) shall stall until receiving a Mass Storage Reset     */
-    if (CBW.dSignature != BOT_CBW_SIGNATURE)
-        Bot_Abort(BOTH_DIR);
 }
 /*******************************************************************************
  * Function Name  : USBdevice_SetConfiguration.
@@ -241,12 +199,6 @@ USB_Result USBdevice_Data_Setup(uint8_t RequestNo)
 //        return UnSupport;
 
     CopyRoutine = NULL;
-    if ((Type_Recipient == (CLASS_REQUEST | INTERFACE_RECIPIENT))
-            && (RequestNo == GET_MAX_LUN) && (pInformation->USBwValue == 0)
-            && (pInformation->USBwLength == 0x01))
-    {
-        CopyRoutine = Get_Max_Lun;
-    }
     if (RequestNo == GET_LINE_CODING)
     {
         if (Type_Recipient == (CLASS_REQUEST | INTERFACE_RECIPIENT))
@@ -302,23 +254,6 @@ uint8_t* USBdevice_SetReport_Feature(uint16_t Length)
  *******************************************************************************/
 USB_Result USBdevice_NoData_Setup(uint8_t RequestNo)
 {
-    if ((Type_Recipient == (CLASS_REQUEST | INTERFACE_RECIPIENT))
-            && (RequestNo == MASS_STORAGE_RESET) && (pInformation->USBwValue == 0)
-            && (pInformation->USBwIndex == 0) && (pInformation->USBwLength == 0x00))
-    {
-        /* Initialize Endpoint 4 */
-        USB_ClrDattogTx(ENDP4);
-
-        /* Initialize Endpoint 5 */
-        USB_ClrDattogRx(ENDP5);
-
-        /*intialise the CBW signature to enable the clear feature*/
-        CBW.dSignature = BOT_CBW_SIGNATURE;
-        Bot_State = BOT_IDLE;
-
-        return Success;
-    }
-
     if (Type_Recipient == (CLASS_REQUEST | INTERFACE_RECIPIENT))
     {
         if (RequestNo == SET_COMM_FEATURE)
@@ -392,7 +327,7 @@ USB_Result USBdevice_Get_Interface_Setting(uint8_t Interface, uint8_t AlternateS
     {
         return UnSupport;
     }
-    else if (Interface > 3)
+    else if (Interface > 2)
     {
         return UnSupport;
     }
@@ -430,25 +365,6 @@ uint8_t* USBdevice_GetProtocolValue(uint16_t Length)
     else
     {
         return (uint8_t*)(&ProtocolValue);
-    }
-}
-/*******************************************************************************
-* Function Name  : Get_Max_Lun
-* Description    : Handle the Get Max Lun request.
-* Input          : uint16_t Length.
-* Output         : None.
-* Return         : None.
-*******************************************************************************/
-uint8_t *Get_Max_Lun(uint16_t Length)
-{
-    if (Length == 0)
-    {
-        pInformation->Ctrl_Info.Usb_wLength = LUN_DATA_LENGTH;
-        return 0;
-    }
-    else
-    {
-        return((uint8_t*)(&Max_Lun));
     }
 }
 /*******************************************************************************

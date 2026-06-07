@@ -26,10 +26,6 @@ typedef struct
 #define SET_CONTROL_LINE_STATE      0x22
 #define SEND_BREAK                  0x23
 
-#define GET_MAX_LUN                0xFE
-#define MASS_STORAGE_RESET         0xFF
-#define LUN_DATA_LENGTH            1
-
 void USBdevice_init(void);
 void USBdevice_Reset(void);
 void USBdevice_SetConfiguration(void);
@@ -45,8 +41,6 @@ uint8_t* USBdevice_GetStringDescriptor(uint16_t);
 USB_Result USBdevice_SetProtocol(void);
 uint8_t* USBdevice_GetProtocolValue(uint16_t Length);
 USB_Result USBdevice_SetProtocol(void);
-void USBdevice_ClearFeature(void);
-uint8_t *Get_Max_Lun(uint16_t Length);
 uint8_t *Virtual_Com_Port_GetLineCoding(uint16_t Length);
 uint8_t *Virtual_Com_Port_SetLineCoding(uint16_t Length);
 #define SOF_CALLBACK
@@ -56,6 +50,7 @@ uint8_t *Virtual_Com_Port_SetLineCoding(uint16_t Length);
 #define USBdevice_GetInterface       USB_ProcessNop
 #define USBdevice_SetInterface       USB_ProcessNop
 #define USBdevice_GetStatus          USB_ProcessNop
+#define USBdevice_ClearFeature       USB_ProcessNop
 #define USBdevice_SetEndPointFeature USB_ProcessNop
 #define USBdevice_SetDeviceFeature   USB_ProcessNop
 //#define USBdevice_SetDeviceAddress          USB_ProcessNop

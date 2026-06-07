@@ -77,6 +77,8 @@ C_DIRS += $(COMPONENTS_DIR)/log
 
 SRC_OBJS_DIRS += $(foreach DIR, $(C_DIRS), $(wildcard $(DIR)/*.c))
 C_SOURCES = $(SRC_OBJS_DIRS)
+USB_STORAGE_SOURCES := $(wildcard ../USER/src/usb_storage_*.c)
+C_SOURCES := $(filter-out $(USB_STORAGE_SOURCES),$(C_SOURCES))
 
 ######################################
 # ASM sources

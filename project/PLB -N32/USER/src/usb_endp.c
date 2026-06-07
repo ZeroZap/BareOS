@@ -7,8 +7,6 @@
 #include "usb_istr.h"
 #include "usb_conf.h"
 #include "usb_pwr.h"
- 
-#include "usb_storage_bot.h"
 /*******************************************************************************
  * Function Name  : EP2_OUT_Callback.
  * Description    : EP2 OUT Callback Routine.
@@ -59,33 +57,6 @@ void EP3_IN_Callback(void)
     else USB_SetEpTxCnt(ENDP3, 0);
 
 }
-/*******************************************************************************
- * Function Name  : EP4_IN_Callback.
- * Description    : EP4 IN Callback Routine.
- * Input          : None.
- * Output         : None.
- * Return         : None.
- *******************************************************************************/
-void EP4_IN_Callback(void)
-{
- 
-    Mass_Storage_In();
-
-}
-/*******************************************************************************
- * Function Name  : EP5_OUT_Callback.
- * Description    : EP5 OUT Callback Routine.
- * Input          : None.
- * Output         : None.
- * Return         : None.
- *******************************************************************************/
-void EP5_OUT_Callback(void)
-{
- 
-    Mass_Storage_Out();
-}
-
-
 /*******************************************************************************
 * Function Name  : SOF_Callback / INTR_SOFINTR_Callback
 * Description    :
