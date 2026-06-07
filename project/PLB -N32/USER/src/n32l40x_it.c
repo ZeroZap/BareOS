@@ -5,6 +5,7 @@
 
 /* NTFx CODE START */
 #include "n32l40x_it.h"
+#include "n32l40x_cfg.h"
 #include "n32l40x.h"
 #include "n32l40x_iwdg.h"
 #include "usb_istr.h"
@@ -307,3 +308,7 @@ void UART4_IRQHandler(void)
 }
 /* NTFx CODE END(UART4_IRQHandler)*/
 
+void UART5_IRQHandler(void)
+{
+    n32_uart5_secboot_isr();
+}

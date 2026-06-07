@@ -12,6 +12,7 @@ extern "C" {
 #include "n32l40x.h"
 #include "n32l40x_conf.h"
 #include "usb_lib.h"
+#include <stddef.h>
 /* NTFx CODE END INCLUDE*/
 
 /* NTFx CODE START ENUM*/
@@ -42,6 +43,17 @@ extern bool USBFS_Configuration(void);
 extern bool SPI_Configuration(void);
 extern bool I2C_Configuration(void);
 /* NTFx CODE END EXTERN*/
+extern void n32_uart5_secboot_init(void);
+extern void n32_uart5_secboot_poll(void);
+extern void n32_uart5_secboot_isr(void);
+extern void n32_uart5_secboot_write_str(const char *str);
+extern int n32_uart5_secboot_read(uint8_t *data, size_t len, uint32_t timeout_ms);
+extern int n32_uart5_secboot_write(const uint8_t *data, size_t len, uint32_t timeout_ms);
+extern volatile uint32_t g_n32_uart5_rx_count;
+extern volatile uint32_t g_n32_uart5_tx_count;
+extern volatile uint32_t g_n32_uart5_rx_drop_count;
+extern volatile uint32_t g_n32_uart5_rb_pending;
+extern volatile uint8_t g_n32_uart5_last_rx;
 
 #ifdef __cplusplus
 }

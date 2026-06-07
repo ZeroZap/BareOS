@@ -3,12 +3,33 @@
  * @author N32cube
  */
 
- #include "n32l40x_cfg.h"
+#include "n32l40x_cfg.h"
+#include "xy_rb.h"
 #include <stdio.h>
 /* NTFx CODE START */
 __IO uint32_t mwTick;
 volatile uint32_t g_n32_debug_log_tx_count;
 volatile uint8_t g_n32_debug_log_last_char;
+volatile uint32_t g_n32_uart5_rx_count;
+volatile uint32_t g_n32_uart5_tx_count;
+volatile uint32_t g_n32_uart5_rx_drop_count;
+volatile uint32_t g_n32_uart5_rb_pending;
+volatile uint8_t g_n32_uart5_last_rx;
+static xy_rb_t s_uart5_rx_rb;
+static uint8_t s_uart5_rx_pool[128];
+
+static void n32_uart5_secboot_irq_enable(void)
+{
+    NVIC_InitType NVIC_InitStructure;
+
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
+    NVIC_InitStructure.NVIC_IRQChannel = UART5_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 8;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+}
+
 void SysTick_Delayms(uint32_t Delayms)
 {
     uint32_t tickstart = mwTick;
@@ -87,6 +108,112 @@ void n32_debug_log_write(const char *str)
 void xy_log_char(char ch)
 {
     n32_debug_log_char(ch);
+}
+
+void n32_uart5_secboot_send_char(char ch)
+{
+    while (USART_GetFlagStatus(UART5, USART_FLAG_TXDE) == RESET) {
+    }
+    USART_SendData(UART5, (uint16_t)ch);
+    g_n32_uart5_tx_count++;
+}
+
+void n32_uart5_secboot_write_str(const char *str)
+{
+    while (*str != '\0') {
+        n32_uart5_secboot_send_char(*str++);
+    }
+}
+
+void n32_uart5_secboot_init(void)
+{
+    xy_rb_init(&s_uart5_rx_rb, s_uart5_rx_pool, (int32_t)sizeof(s_uart5_rx_pool));
+    USART_EnableDMA(UART5, USART_DMAREQ_RX, DISABLE);
+    while (USART_GetFlagStatus(UART5, USART_FLAG_RXDNE) == SET) {
+        (void)USART_ReceiveData(UART5);
+    }
+    USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);
+    USART_ConfigInt(UART5, USART_INT_ERRF, ENABLE);
+    n32_uart5_secboot_irq_enable();
+}
+
+void n32_uart5_secboot_poll(void)
+{
+    g_n32_uart5_rb_pending = (uint32_t)xy_rb_data_len(&s_uart5_rx_rb);
+}
+
+int n32_uart5_secboot_read(uint8_t *data, size_t len, uint32_t timeout_ms)
+{
+    uint32_t start;
+    size_t count = 0U;
+
+    if ((data == NULL) && (len != 0U)) {
+        return -1;
+    }
+
+    start = mwTick;
+    while (count < len) {
+        if (xy_rb_getchar(&s_uart5_rx_rb, &data[count]) == 1U) {
+            count++;
+            continue;
+        }
+
+        if ((int32_t)(mwTick - start) >= (int32_t)timeout_ms) {
+            break;
+        }
+        IWDG_ReloadKey();
+    }
+
+    g_n32_uart5_rb_pending = (uint32_t)xy_rb_data_len(&s_uart5_rx_rb);
+    return (int)count;
+}
+
+int n32_uart5_secboot_write(const uint8_t *data, size_t len, uint32_t timeout_ms)
+{
+    uint32_t start;
+    size_t count = 0U;
+
+    if ((data == NULL) && (len != 0U)) {
+        return -1;
+    }
+
+    start = mwTick;
+    while (count < len) {
+        if (USART_GetFlagStatus(UART5, USART_FLAG_TXDE) == SET) {
+            USART_SendData(UART5, (uint16_t)data[count]);
+            g_n32_uart5_tx_count++;
+            count++;
+            start = mwTick;
+            continue;
+        }
+
+        if ((int32_t)(mwTick - start) >= (int32_t)timeout_ms) {
+            break;
+        }
+        IWDG_ReloadKey();
+    }
+
+    return (int)count;
+}
+
+void n32_uart5_secboot_isr(void)
+{
+    if (USART_GetIntStatus(UART5, USART_INT_RXDNE) == SET) {
+        uint8_t ch = (uint8_t)USART_ReceiveData(UART5);
+        g_n32_uart5_last_rx = ch;
+        g_n32_uart5_rx_count++;
+        if (xy_rb_putchar(&s_uart5_rx_rb, ch) == 0U) {
+            g_n32_uart5_rx_drop_count++;
+        }
+    }
+
+    if ((USART_GetFlagStatus(UART5, USART_FLAG_OREF) == SET)
+        || (USART_GetFlagStatus(UART5, USART_FLAG_NEF) == SET)
+        || (USART_GetFlagStatus(UART5, USART_FLAG_FEF) == SET)
+        || (USART_GetFlagStatus(UART5, USART_FLAG_PEF) == SET)) {
+        (void)UART5->STS;
+        (void)UART5->DAT;
+    }
 }
 
 int fputc(int ch, FILE *f)
@@ -513,10 +640,9 @@ bool USART_Configuration(void)
     USART_Init(USART1, &USART_InitStructure);
      
      
-    /* Enable USART1 IDLEF interrupt*/
-    USART_ConfigInt(USART1,USART_INT_IDLEF,ENABLE);
-    /* Enable USART1RX DMA */
-    USART_EnableDMA(USART1,USART_DMAREQ_RX, ENABLE);
+    /* RX DMA is disabled; receive paths use RXDNE interrupt plus ring buffer. */
+    USART_ConfigInt(USART1,USART_INT_IDLEF,DISABLE);
+    USART_EnableDMA(USART1,USART_DMAREQ_RX, DISABLE);
     /* Enable the USART1 */
     USART_Enable(USART1, ENABLE);
      
@@ -525,13 +651,11 @@ bool USART_Configuration(void)
     USART_Init(USART2, &USART_InitStructure);
      
      
-    /* Enable USART2 IDLEF interrupt*/
-    USART_ConfigInt(USART2,USART_INT_IDLEF,ENABLE);
+    USART_ConfigInt(USART2,USART_INT_IDLEF,DISABLE);
      
     /* Enable USART2 ERRF interrupt*/
     USART_ConfigInt(USART2,USART_INT_ERRF,ENABLE);
-    /* Enable USART2RX DMA */
-    USART_EnableDMA(USART2,USART_DMAREQ_RX, ENABLE);
+    USART_EnableDMA(USART2,USART_DMAREQ_RX, DISABLE);
     /* Enable the USART2 */
     USART_Enable(USART2, ENABLE);
      
@@ -539,8 +663,7 @@ bool USART_Configuration(void)
     /* Configure USART3 */
     USART_Init(USART3, &USART_InitStructure);
      
-    /* Enable USART3RX DMA */
-    USART_EnableDMA(USART3,USART_DMAREQ_RX, ENABLE);
+    USART_EnableDMA(USART3,USART_DMAREQ_RX, DISABLE);
     /* Enable the USART3 */
     USART_Enable(USART3, ENABLE);
      
@@ -558,8 +681,7 @@ bool USART_Configuration(void)
     /* Configure UART5 */
     USART_Init(UART5, &USART_InitStructure);
      
-    /* Enable UART5RX DMA */
-    USART_EnableDMA(UART5,USART_DMAREQ_RX, ENABLE);
+    USART_EnableDMA(UART5,USART_DMAREQ_RX, DISABLE);
     /* Enable the UART5 */
     USART_Enable(UART5, ENABLE);
 /* NTFx CODE END */
