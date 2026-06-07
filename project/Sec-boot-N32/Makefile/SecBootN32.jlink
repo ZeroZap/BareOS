@@ -1,0 +1,5 @@
+r
+loadfile build/SecBootN32.hex
+r
+g
+qc
