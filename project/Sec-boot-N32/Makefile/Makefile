@@ -74,8 +74,6 @@ endif
 C_DIRS += ../USER/src
 C_DIRS += $(HAL_DIR)/CMSIS/core
 C_DIRS += $(HAL_DIR)/CMSIS/device
-C_DIRS += $(HAL_DIR)/n32l40x_std_periph_driver/src
-C_DIRS += $(HAL_DIR)/n32l40x_usbfs_driver/src
 C_DIRS += $(COMPONENTS_DIR)/clib
 C_DIRS += $(COMPONENTS_DIR)/log
 C_DIRS += $(COMPONENTS_DIR)/xy_secboot/src
@@ -90,6 +88,14 @@ C_SOURCES := $(filter-out $(USB_SOURCES),$(C_SOURCES))
 PLB_APP_SOURCES := $(wildcard ../USER/src/plb_*.c)
 C_SOURCES := $(filter-out $(PLB_APP_SOURCES),$(C_SOURCES))
 
+HAL_SOURCES += $(HAL_DIR)/n32l40x_std_periph_driver/src/misc.c
+HAL_SOURCES += $(HAL_DIR)/n32l40x_std_periph_driver/src/n32l40x_flash.c
+HAL_SOURCES += $(HAL_DIR)/n32l40x_std_periph_driver/src/n32l40x_gpio.c
+HAL_SOURCES += $(HAL_DIR)/n32l40x_std_periph_driver/src/n32l40x_iwdg.c
+HAL_SOURCES += $(HAL_DIR)/n32l40x_std_periph_driver/src/n32l40x_rcc.c
+HAL_SOURCES += $(HAL_DIR)/n32l40x_std_periph_driver/src/n32l40x_usart.c
+C_SOURCES += $(HAL_SOURCES)
+
 ######################################
 # ASM sources
 ######################################
@@ -103,14 +109,10 @@ C_INCS += ../USER/inc
 C_INCS += $(HAL_DIR)/CMSIS/core
 C_INCS += $(HAL_DIR)/CMSIS/device
 C_INCS += $(HAL_DIR)/n32l40x_std_periph_driver/inc
-C_INCS += $(HAL_DIR)/n32l40x_usbfs_driver/inc
 C_INCS += $(COMPONENTS_DIR)/clib
 C_INCS += $(COMPONENTS_DIR)/log
 C_INCS += $(COMPONENTS_DIR)/mem
-C_INCS += $(COMPONENTS_DIR)/at/include
 C_INCS += $(COMPONENTS_DIR)/crypto/inc
-C_INCS += $(COMPONENTS_DIR)/storage/fee
-C_INCS += $(COMPONENTS_DIR)/storage/eeprom
 C_INCS += $(COMPONENTS_DIR)/xy_secboot/inc
 ## NTFx CODE END C includes ##
 
@@ -118,20 +120,8 @@ INCS_OBJS_DIR = $(foreach DIR2, $(C_INCS), $(wildcard $(DIR2)/*.h))
 INCS_OBJS_PATH = $(sort $(dir $(INCS_OBJS_DIR)))
 C_INCLUDES = $(addprefix -I,$(INCS_OBJS_PATH))
 
-CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_aes.c
 CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_sha256_hmac.c
 C_SOURCES += $(CRYPTO_SOURCES)
-
-MEM_SOURCES += $(COMPONENTS_DIR)/mem/xy_mem.c
-C_SOURCES += $(MEM_SOURCES)
-
-AT_SOURCES += $(COMPONENTS_DIR)/at/src/at_chat.c
-AT_SOURCES += $(COMPONENTS_DIR)/at/src/at_port.c
-C_SOURCES += $(AT_SOURCES)
-
-STORAGE_SOURCES += $(COMPONENTS_DIR)/storage/fee/xy_fee_nano.c
-STORAGE_SOURCES += $(COMPONENTS_DIR)/storage/eeprom/xy_eeprom.c
-C_SOURCES += $(STORAGE_SOURCES)
 
 ######################################
 # Lib files

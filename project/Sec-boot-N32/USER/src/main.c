@@ -36,9 +36,6 @@ int main(void)
     /* NTFx CODE START Config*/
     RCC_Configuration();
     GPIO_Configuration();
-#if 0
-    NVIC_Configuration();
-#endif
     USART_Configuration();
     xy_log_init();
     xy_log_i("SecBoot-N32 UART4 log ready");
@@ -47,16 +44,6 @@ int main(void)
     secboot_log_reset_flags();
     IWDG_Configuration();
     secboot_n32_v1_init();
-    /* Keep the algorithm validation image minimal. Enabling unused generated
-     * peripherals here can introduce pending interrupts or board-level resets. */
-#if 0
-    LPTIM_Configuration();
-    RTC_Configuration();
-    ADC_Configuration();
-    SPI_Configuration();
-    I2C_Configuration();
-    DMA_Configuration();
-#endif
     /* NTFx CODE END Config*/
     xy_log_i("SecBoot-N32 main loop start");
     secboot_n32_v1_print_layout();
