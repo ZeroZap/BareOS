@@ -2,6 +2,8 @@
 
 `Sec-boot-N32` is a copy of the PLB-N32 board project redefined as the first N32L406 secure boot development target.
 
+See `SECBOOT_GUIDE.md` for the end-to-end build, package, flash, GUI, and troubleshooting guide.
+
 ## V1 Scope
 
 ```text
