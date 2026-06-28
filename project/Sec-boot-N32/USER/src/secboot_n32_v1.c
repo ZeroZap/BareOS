@@ -18,6 +18,15 @@ typedef struct {
     uint16_t length;
 } secboot_uart_frame_t;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t counter;
+    uint32_t counter_inv;
+    uint32_t crc32;
+} secboot_rollback_record_t;
+
+#define SECBOOT_N32_ROLLBACK_MAGIC      0x52424B31u /* 'RBK1' */
+
 static const xy_secboot_partition_t s_secboot_n32_parts[] = {
     { XY_SECBOOT_PART_BOOTLOADER,
       XY_SECBOOT_STORAGE_INTERNAL_FLASH,
@@ -366,11 +375,82 @@ static int secboot_get_key(xy_secboot_key_type_t type,
 
 static int secboot_rollback_read(uint32_t *counter)
 {
+    uint32_t addr;
+    uint32_t max_counter = 0u;
+
     if (counter == NULL) {
         return -1;
     }
-    *counter = 0u;
+
+    for (addr = SECBOOT_N32_ROLLBACK_BASE_ADDR;
+         addr + sizeof(secboot_rollback_record_t) <=
+         SECBOOT_N32_ROLLBACK_BASE_ADDR + SECBOOT_N32_FLASH_PAGE_SIZE;
+         addr += sizeof(secboot_rollback_record_t)) {
+        secboot_rollback_record_t record;
+        uint32_t crc;
+
+        memcpy(&record, (const void *)addr, sizeof(record));
+        if (record.magic == 0xFFFFFFFFu) {
+            break;
+        }
+        if (record.magic != SECBOOT_N32_ROLLBACK_MAGIC ||
+            record.counter_inv != ~record.counter) {
+            continue;
+        }
+
+        crc = crc32_update(0u, (const uint8_t *)&record,
+                           sizeof(record) - sizeof(record.crc32));
+        if (crc != record.crc32) {
+            continue;
+        }
+        if (record.counter > max_counter) {
+            max_counter = record.counter;
+        }
+    }
+
+    *counter = max_counter;
     return 0;
+}
+
+static int secboot_rollback_write(uint32_t counter)
+{
+    secboot_rollback_record_t record;
+    uint32_t current;
+    uint32_t addr;
+
+    if (secboot_rollback_read(&current) != 0) {
+        return -1;
+    }
+    if (counter <= current) {
+        return 0;
+    }
+
+    for (addr = SECBOOT_N32_ROLLBACK_BASE_ADDR;
+         addr + sizeof(secboot_rollback_record_t) <=
+         SECBOOT_N32_ROLLBACK_BASE_ADDR + SECBOOT_N32_FLASH_PAGE_SIZE;
+         addr += sizeof(secboot_rollback_record_t)) {
+        uint32_t magic = *(const uint32_t *)addr;
+        if (magic == 0xFFFFFFFFu) {
+            break;
+        }
+    }
+
+    if (addr + sizeof(secboot_rollback_record_t) >
+        SECBOOT_N32_ROLLBACK_BASE_ADDR + SECBOOT_N32_FLASH_PAGE_SIZE) {
+        if (secboot_flash_erase(SECBOOT_N32_ROLLBACK_BASE_ADDR,
+                                SECBOOT_N32_FLASH_PAGE_SIZE) != 0) {
+            return -1;
+        }
+        addr = SECBOOT_N32_ROLLBACK_BASE_ADDR;
+    }
+
+    record.magic = SECBOOT_N32_ROLLBACK_MAGIC;
+    record.counter = counter;
+    record.counter_inv = ~counter;
+    record.crc32 = crc32_update(0u, (const uint8_t *)&record,
+                                sizeof(record) - sizeof(record.crc32));
+
+    return secboot_flash_write(addr, (const uint8_t *)&record, sizeof(record));
 }
 
 static const xy_secboot_crypto_ops_t s_secboot_crypto_ops = {
@@ -384,7 +464,7 @@ static const xy_secboot_crypto_ops_t s_secboot_crypto_ops = {
     NULL,
     secboot_get_key,
     secboot_rollback_read,
-    NULL,
+    secboot_rollback_write,
     xy_secboot_ct_compare,
     xy_secboot_secure_zero,
     NULL,
@@ -598,6 +678,8 @@ static void handle_hello(const secboot_uart_frame_t *frame)
 static void handle_manifest(const secboot_uart_frame_t *frame,
                             const uint8_t *payload)
 {
+    uint32_t rollback_counter;
+
     if (frame->length != sizeof(s_manifest)) {
         send_nack(frame->seq, SECBOOT_N32_UART_REASON_BAD_LENGTH, frame->length);
         return;
@@ -608,6 +690,16 @@ static void handle_manifest(const secboot_uart_frame_t *frame,
         memset(&s_manifest, 0, sizeof(s_manifest));
         s_manifest_valid = 0u;
         send_nack(frame->seq, SECBOOT_N32_UART_REASON_BAD_MANIFEST, 0u);
+        return;
+    }
+
+    if (secboot_rollback_read(&rollback_counter) != 0 ||
+        s_manifest.security_counter < rollback_counter) {
+        uint32_t rejected_counter = s_manifest.security_counter;
+        memset(&s_manifest, 0, sizeof(s_manifest));
+        s_manifest_valid = 0u;
+        send_nack(frame->seq, SECBOOT_N32_UART_REASON_ROLLBACK_REJECTED,
+                  rejected_counter);
         return;
     }
 
@@ -690,6 +782,8 @@ static void handle_end(const secboot_uart_frame_t *frame)
         xy_log_w("SecBoot-N32 verify failed rc=%d", rc);
         send_status(SECBOOT_N32_UART_PKT_ERROR,
                     frame->seq,
+                    rc == XY_SECBOOT_ERR_ROLLBACK ?
+                    SECBOOT_N32_UART_REASON_ROLLBACK_REJECTED :
                     SECBOOT_N32_UART_REASON_IMAGE_VERIFY_FAILED,
                     s_expected_offset,
                     (uint32_t)rc);
@@ -703,6 +797,12 @@ static void handle_end(const secboot_uart_frame_t *frame)
                             sizeof(s_manifest)) != 0) {
         send_nack(frame->seq, SECBOOT_N32_UART_REASON_FLASH_WRITE_FAILED,
                   SECBOOT_N32_APP_MANIFEST_ADDR);
+        return;
+    }
+
+    if (secboot_rollback_write(s_manifest.security_counter) != 0) {
+        send_nack(frame->seq, SECBOOT_N32_UART_REASON_ROLLBACK_REJECTED,
+                  s_manifest.security_counter);
         return;
     }
 

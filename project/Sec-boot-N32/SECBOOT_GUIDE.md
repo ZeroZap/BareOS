@@ -25,8 +25,9 @@
 | 开发 HMAC 验证 | 已接入 | 使用 `tool/xy_secboot/dev_hmac_key.txt`，仅限实验室 |
 | 签名/公钥验证 | 未完成 | 生产级公钥验证后续补齐 |
 | App manifest 写入 | 有条件 | 仅 verify 成功后写入 |
-| App 跳转 | 未完成 | 后续添加 |
-| Boot state/rollback 持久化 | 未完成 | 后续添加 |
+| App 跳转 | 已实现 | reset-time verify 后设置 MSP/VTOR 并跳转 |
+| Rollback counter 持久化 | 已实现 | `0x08006800` append-only CRC 记录 |
+| Boot state 持久化 | 未完成 | 后续添加 confirmed/pending 状态 |
 
 重要：只有使用匹配开发 HMAC key 打包的镜像才能通过 `END` 并写入 App manifest。未带 HMAC 或 key 不匹配的包会返回 `IMAGE_VERIFY_FAILED`，避免把未认证镜像标记为可启动。
 
@@ -330,7 +331,8 @@ detail        4 bytes
 | `BAD_MANIFEST` | 地址、产品 ID、大小不匹配 | 检查 pack 参数 |
 | `BAD_OFFSET` | 传输 offset 不连续 | 重新刷写，检查串口稳定性 |
 | `FLASH_WRITE_FAILED` | Flash 未擦除、越界或供电异常 | 确认 App 区地址和大小 |
-| `IMAGE_VERIFY_FAILED` | 未使用匹配 HMAC key、镜像损坏或生产签名后端未接入 | 用 `--hmac-key tool/xy_secboot/dev_hmac_key.txt` 重新打包并重刷 |
+| `IMAGE_VERIFY_FAILED` | 未使用匹配 HMAC key、镜像 hash/HMAC 损坏或生产签名后端未接入 | 用 `--hmac-key tool/xy_secboot/dev_hmac_key.txt` 重新打包并重刷 |
+| `ROLLBACK_REJECTED` | `security_counter` 低于已持久化 counter，或 rollback page 写入失败 | 提高 `--security-counter` 后重新打包；若写入失败检查 rollback page Flash |
 
 ## 开发顺序建议
 
@@ -339,7 +341,7 @@ detail        4 bytes
 | 1 | 固定 UART5 transport，保证 HELLO/CAPS、MANIFEST、DATA 可重复跑通 |
 | 2 | 补 HMAC-SHA256 或 ECDSA-P256 验证后端 |
 | 3 | 实现 App manifest boot 检查和 App jump |
-| 4 | 持久化 boot state 和 rollback counter |
+| 4 | 持久化 boot state confirmed/pending 状态 |
 | 5 | 加入 host fault injection 和自动化回归 |
 | 6 | 替换为生产密钥/生产算法策略 |
 

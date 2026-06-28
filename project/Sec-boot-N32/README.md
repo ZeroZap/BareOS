@@ -130,6 +130,6 @@ This HMAC path is only for bring-up. Production still needs a protected root key
 |---:|---|
 | 1 | Add boot public key storage/provisioning |
 | 2 | Replace lab HMAC path with production ECDSA-P256 or protected-key MAC backend |
-| 3 | Add app jump after verified manifest boot check |
-| 4 | Persist boot state/rollback counter in reserved Flash pages |
+| 3 | Harden reset-time App jump and recovery policy |
+| 4 | Persist boot state metadata beyond rollback counter |
 | 5 | Add host `xy-secpack` and `xy-secflash` tools |

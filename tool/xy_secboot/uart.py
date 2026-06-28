@@ -165,12 +165,19 @@ class SecbootUartClient:
 
     def hello(self) -> Frame:
         self.write_frame(Frame(PacketType.HELLO, seq=0, session_id=self.session_id))
-        caps = self.read_frame()
-        if caps.type != PacketType.CAPS:
-            raise RuntimeError(f"expected CAPS, got {PACKET_NAMES.get(caps.type, caps.type)}")
-        if len(caps.payload) >= 4:
-            self.max_payload = struct.unpack_from("<H", caps.payload, 2)[0]
-        return caps
+        end = time.monotonic() + self.timeout
+        last_type: int | None = None
+        while time.monotonic() < end:
+            caps = self.read_frame(max(end - time.monotonic(), 0.001))
+            if caps.type != PacketType.CAPS:
+                last_type = caps.type
+                continue
+            if len(caps.payload) >= 4:
+                self.max_payload = struct.unpack_from("<H", caps.payload, 2)[0]
+            return caps
+        if last_type is not None:
+            raise RuntimeError(f"expected CAPS, got {PACKET_NAMES.get(last_type, last_type)}")
+        raise TimeoutError("timeout waiting for CAPS")
 
     def recover_bootloader(self, duration_ms: int, interval_ms: int = 100) -> None:
         if self.ser is None:
