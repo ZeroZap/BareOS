@@ -90,7 +90,7 @@ int main(void)
         IWDG_ReloadKey();
         n32_uart5_secboot_poll();
         if ((int32_t)(mwTick - next_heartbeat) >= 0) {
-            xy_log_i("PLB-N32 UART4 heartbeat UART5 rx=%u tx=%u rb=%u drop=%u last=%02x",
+            xy_log_i("PLB-N32 UART4 heartbeat UART5 rx=%u tx=%u rb=%u drop=%u last=%x",
                      (unsigned int)g_n32_uart5_rx_count,
                      (unsigned int)g_n32_uart5_tx_count,
                      (unsigned int)g_n32_uart5_rb_pending,
