@@ -72,6 +72,7 @@ def cmd_flash(args: argparse.Namespace) -> int:
         print(f"\rDATA {done}/{total} {percent:5.1f}%", end="", flush=True)
 
     with SecbootUartClient(args.port, args.baud, args.timeout_ms / 1000.0, args.session_id) as client:
+        client.recover_bootloader(args.recover_ms)
         caps = client.hello()
         print(f"CAPS payload={caps.payload.hex()}")
         ack = client.flash_package(package, args.payload, args.retries, progress=progress)
@@ -120,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     flash.add_argument("--payload", type=int, default=UART_DEFAULT_PAYLOAD)
     flash.add_argument("--timeout-ms", type=int, default=1000)
     flash.add_argument("--retries", type=int, default=10)
+    flash.add_argument("--recover-ms", type=int, default=0, help="send '?' before HELLO to keep bootloader in recovery")
     flash.add_argument("--session-id", type=parse_int, default=0)
     flash.add_argument("--reset", action="store_true", help="send RESET after successful END")
     flash.set_defaults(func=cmd_flash)

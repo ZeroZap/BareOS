@@ -172,6 +172,19 @@ class SecbootUartClient:
             self.max_payload = struct.unpack_from("<H", caps.payload, 2)[0]
         return caps
 
+    def recover_bootloader(self, duration_ms: int, interval_ms: int = 100) -> None:
+        if self.ser is None:
+            raise RuntimeError("serial port is not open")
+        if duration_ms <= 0:
+            return
+        end = time.monotonic() + (duration_ms / 1000.0)
+        interval = max(interval_ms, 1) / 1000.0
+        while time.monotonic() < end:
+            self.ser.write(b"?")
+            self.ser.flush()
+            time.sleep(interval)
+        self.ser.reset_input_buffer()
+
     def send_with_ack(self, frame: Frame, retries: int = 10) -> Ack:
         last_ack: Ack | None = None
         for _ in range(retries):
@@ -181,6 +194,8 @@ class SecbootUartClient:
             except TimeoutError:
                 continue
             last_ack = ack
+            if ack.ack_seq != (frame.seq & 0xFFFF):
+                continue
             if ack.ok:
                 return ack
             if ack.reason in (Reason.BAD_HEADER_CRC, Reason.BAD_PAYLOAD_CRC, Reason.BUSY) or (

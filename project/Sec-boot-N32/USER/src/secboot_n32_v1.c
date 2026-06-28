@@ -74,6 +74,8 @@ static uint32_t s_session_id;
 static uint8_t s_payload[SECBOOT_N32_UART_V1_MAX_PAYLOAD];
 static xy_secboot_single_ctx_t s_secboot_ctx;
 
+extern __IO uint32_t mwTick;
+
 static const uint8_t s_secboot_dev_hmac_key[] =
     "xy-secboot-n32-dev-hmac-key-v1";
 
@@ -419,6 +421,47 @@ static int manifest_basic_check(const xy_secboot_manifest_t *manifest)
     return 0;
 }
 
+static int app_vector_check(uint32_t app_addr, uint32_t image_size)
+{
+    uint32_t sp = le32_read((const uint8_t *)app_addr);
+    uint32_t reset = le32_read((const uint8_t *)(app_addr + 4u));
+
+    if (sp < 0x20000000u || sp > 0x20004000u || (sp & 0x7u) != 0u) {
+        return -1;
+    }
+    if (reset < app_addr || reset >= (app_addr + image_size) || (reset & 0x1u) == 0u) {
+        return -1;
+    }
+    return 0;
+}
+
+static void jump_to_app(uint32_t app_addr)
+{
+    uint32_t sp = le32_read((const uint8_t *)app_addr);
+    uint32_t reset = le32_read((const uint8_t *)(app_addr + 4u));
+    void (*entry)(void) = (void (*)(void))reset;
+    uint32_t i;
+
+    __disable_irq();
+    SysTick->CTRL = 0u;
+    SysTick->LOAD = 0u;
+    SysTick->VAL = 0u;
+
+    for (i = 0u; i < 8u; i++) {
+        NVIC->ICER[i] = 0xFFFFFFFFu;
+        NVIC->ICPR[i] = 0xFFFFFFFFu;
+    }
+
+    SCB->VTOR = app_addr;
+    __DSB();
+    __ISB();
+    __set_MSP(sp);
+    entry();
+
+    while (1) {
+    }
+}
+
 static void make_header(uint8_t type, uint16_t seq, uint32_t session_id,
                         uint32_t offset, uint16_t length, uint8_t *header)
 {
@@ -698,6 +741,39 @@ void secboot_n32_v1_init(void)
              rc);
     xy_log_i("SecBoot-N32 partition count=%u",
              (unsigned int)s_secboot_n32_table.count);
+}
+
+int secboot_n32_v1_try_boot_app(uint32_t recovery_wait_ms)
+{
+    xy_secboot_boot_action_t action;
+    xy_secboot_manifest_t manifest;
+    uint32_t start = mwTick;
+
+    while ((int32_t)(mwTick - start) < (int32_t)recovery_wait_ms) {
+        n32_uart5_secboot_poll();
+        if (g_n32_uart5_rb_pending != 0u) {
+            xy_log_i("SecBoot-N32 recovery UART input, stay bootloader");
+            return 0;
+        }
+    }
+
+    action = xy_secboot_single_check_boot(&s_secboot_ctx, &manifest);
+    if (action != XY_SECBOOT_BOOT_ACTION_JUMP_APP) {
+        xy_log_i("SecBoot-N32 no verified App, stay bootloader action=%u",
+                 (unsigned int)action);
+        return 0;
+    }
+
+    if (manifest_basic_check(&manifest) != 0 ||
+        app_vector_check(manifest.image_addr, manifest.image_size) != 0) {
+        xy_log_w("SecBoot-N32 App vector invalid");
+        return -1;
+    }
+
+    xy_log_i("SecBoot-N32 jump App entry=%x", (unsigned int)manifest.entry_addr);
+    (void)n32_uart5_secboot_wait_tx_done(100u);
+    jump_to_app(manifest.image_addr);
+    return 1;
 }
 
 void secboot_n32_v1_send_banner(void)

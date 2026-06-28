@@ -70,7 +70,25 @@ python tool/xy_secboot/xy_secboot.py flash \
   --reset
 ```
 
-`END ACK` means the image was written, verified, and the App manifest was committed. The current SecBoot-N32 V1 firmware does not immediately jump to the App after `END ACK`; without `--reset`, continuing bootloader heartbeat logs are expected. Production firmware should boot by verifying the committed manifest on reset and then jumping to the App entry.
+`END ACK` means the image was written, verified, and the App manifest was committed. SecBoot-N32 V1 does not immediately jump to the App after `END ACK`; on the next reset it opens a 1500 ms UART5 recovery window, then verifies the committed manifest and jumps to the App entry if no host input is present. Without `--reset`, continuing bootloader heartbeat logs after `END ACK` are expected until the next reset.
+
+If a valid App is already installed and the board jumps too quickly for manual flashing, use `--recover-ms` and reset the board while the host is sending recovery bytes:
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM12 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000 \
+  --reset
+```
+
+`--recover-ms` is a host-side recovery preamble. The tool opens the serial port, sends `?` repeatedly for the configured duration, then clears received banner text before sending `HELLO`. Press the board reset key during this preamble so SecBoot receives UART5 input inside its 1500 ms recovery window and stays in bootloader mode.
+
+Use it when a normal `flash` command times out because the board has already jumped to the App. Do not use it when the board is already printing SecBoot heartbeat; in that case a normal `flash` command can talk to the bootloader directly.
 
 Launch GUI:
 
@@ -109,6 +127,8 @@ python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12 --capture-l
 The packer emits the `.sbp` package described in `components/xy_secboot/docs/SECBOOT_V1_DESIGN.md`.
 
 The MCU Flash write path requires DATA lengths to be 4-byte aligned. The packer pads the input image with `0xFF` to a 4-byte boundary before calculating the image hash and manifest fields.
+
+The UART flasher validates that each ACK/NACK carries the sequence number of the frame currently in flight. Stale ACKs from delayed serial delivery are ignored and retried instead of advancing the DATA offset.
 
 `tool/xy_secboot/dev_hmac_key.txt` is the lab-only key wired into the SecBoot-N32 development build. Override it with `--hmac-key` for CLI packaging or `SECBOOT_HMAC_KEY=...` for the PLB Makefile target.
 

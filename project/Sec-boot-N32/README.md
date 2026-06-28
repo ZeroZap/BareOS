@@ -76,14 +76,15 @@ payload_crc 4 bytes   CRC32 over payload
 
 ## After Flash
 
-`END ACK` means the App image was written, verified, and the manifest was committed. It does not currently jump to the App immediately. The V1 bootloader remains in its main loop and keeps printing heartbeat logs until reset.
+`END ACK` means the App image was written, verified, and the manifest was committed. It does not jump to the App immediately. On the next reset, the bootloader opens a short UART5 recovery window, then verifies the committed manifest and jumps to the App if no host input is present.
 
 Recommended modes:
 
 | Phase | Mode | Reason |
 |---|---|---|
-| Bring-up/debug | Use host `flash --reset` after `END ACK` | Lowest-risk path; keeps update and boot validation separate |
-| Production | Verify manifest at reset, then jump to App | Required so power-cycle/reset boots the verified App without a host |
+| Bring-up/debug | Use host `flash --reset` after `END ACK` | Exercises the same reset-time verification path as a power cycle |
+| Recovery/update | Send any UART5 byte during the recovery window | Keeps the bootloader in download mode before it jumps App |
+| Production | Verify manifest at reset, then jump to App | Power-cycle/reset boots the verified App without a host |
 
 Example debug command:
 
@@ -98,7 +99,24 @@ python tool/xy_secboot/xy_secboot.py flash \
   --reset
 ```
 
-If `--reset` is omitted, repeated `SecBoot-N32 heartbeat` logs after `END ACK` are expected.
+If `--reset` is omitted, repeated `SecBoot-N32 heartbeat` logs after `END ACK` are expected until the next reset. The current recovery window is 1500 ms.
+
+For manual recovery after a valid App is already installed, run the host command with a longer recovery preamble and reset the board during that window:
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM12 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000
+```
+
+`--recover-ms` means the host opens the serial port and repeatedly sends `?` for the requested duration before sending `HELLO`. Press the board reset key while this preamble is running. SecBoot will see UART5 input during its 1500 ms recovery window, stay in bootloader mode, and then the host will continue with normal `HELLO -> CAPS -> MANIFEST -> DATA -> END` flashing.
+
+Use `--recover-ms` only when the board already has a valid App and resets into the App too quickly for a normal `flash` command. If UART4 already shows SecBoot heartbeat, a normal `flash` command is enough.
 
 ## Security State
 

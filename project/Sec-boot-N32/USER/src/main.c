@@ -51,10 +51,10 @@ int main(void)
     }
 #endif
     secboot_n32_v1_init();
+    (void)secboot_n32_v1_try_boot_app(1500u);
     /* NTFx CODE END Config*/
     xy_log_i("SecBoot-N32 main loop start");
     secboot_n32_v1_print_layout();
-    secboot_n32_v1_send_banner();
     next_heartbeat = mwTick + 1000U;
     while(1)
     {

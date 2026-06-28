@@ -58,6 +58,7 @@ typedef enum {
 } secboot_n32_uart_reason_t;
 
 void secboot_n32_v1_init(void);
+int secboot_n32_v1_try_boot_app(uint32_t recovery_wait_ms);
 void secboot_n32_v1_poll(void);
 void secboot_n32_v1_send_banner(void);
 void secboot_n32_v1_print_layout(void);

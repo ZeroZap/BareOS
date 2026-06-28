@@ -196,7 +196,7 @@ END -> ACK/ERROR
 
 若包未使用匹配 HMAC key，`END` 会返回 `ERROR reason=IMAGE_VERIFY_FAILED`。使用 `tool/xy_secboot/dev_hmac_key.txt` 打包后，`END` 应返回 `ACK` 并写入 App manifest。
 
-`END ACK` 只表示镜像写入、校验和 manifest 提交完成；当前 V1 bootloader 不会在 `END ACK` 后立即跳转 App，因此 UART4 继续输出 `SecBoot-N32 heartbeat` 属于预期行为。
+`END ACK` 只表示镜像写入、校验和 manifest 提交完成；V1 bootloader 不会在 `END ACK` 后立即跳转 App。下一次复位时，bootloader 会打开 1500 ms UART5 recovery 窗口；窗口内没有主机输入时，读取 `0x08007000` manifest，验证 App，然后设置 MSP/VTOR 并跳转 `0x08007800`。
 
 调试阶段推荐在刷写命令后追加 `--reset`，让主机在 `END ACK` 后发送 RESET：
 
@@ -211,7 +211,31 @@ python tool/xy_secboot/xy_secboot.py flash \
   --reset
 ```
 
-产品阶段应补齐 bootloader 复位启动路径：读取 `0x08007000` manifest，调用验证逻辑确认 App 镜像可信，然后设置 MSP/VTOR 并跳转 `0x08007800`。这样设备断电重启或看门狗复位后也能进入已验证 App，不依赖主机命令。
+若需要留在 bootloader 重新下载，在复位后 1500 ms recovery 窗口内向 UART5 发送任意字节，例如重新发起 `flash` 命令或发送 `?`。
+
+手工调试时更推荐使用 `--recover-ms` 拉长主机侧 recovery preamble：先运行命令，然后在该时间窗口内按复位，工具会持续发送 `?` 让 bootloader 留在下载模式，再自动进入 HELLO/CAPS。
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM12 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000 \
+  --reset
+```
+
+`--recover-ms` 的具体含义：
+
+1. 上位机先打开串口。
+2. 在指定时间内周期发送 `?`。
+3. 用户在该时间内按下板子 reset。
+4. SecBoot 复位后在 1500 ms recovery 窗口内收到 UART5 字节，因此留在 bootloader。
+5. 上位机清空 recovery 期间产生的 banner/杂字节，再发送 `HELLO` 并等待 `CAPS`。
+
+使用场景：板子已经有有效 App，复位后会自动跳 App，普通 `flash` 命令报 `timeout waiting for secboot frame`。如果 UART4 已经在打印 SecBoot heartbeat，说明当前已经停在 bootloader，不需要 `--recover-ms`。
 
 ## PLB-N32 作为 App 的自动化流程
 
@@ -247,7 +271,7 @@ python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12
 python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12 --capture-log COM8
 ```
 
-当前 MCU 端开发 HMAC 验证已接入，但 App jump 还未完成，因此自动化流程可以稳定验证构建、打包、MANIFEST/DATA 传输、Flash 写入和 END 认证链路；完整启动 PLB App 仍需要后续补齐 reset-time verify + jump app。
+当前 MCU 端开发 HMAC 验证和 reset-time verify + jump app 已接入，自动化流程可以验证构建、打包、MANIFEST/DATA 传输、Flash 写入、END 认证链路和复位启动路径。
 
 ## GUI 使用
 
