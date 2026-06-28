@@ -25,7 +25,21 @@ typedef struct {
     uint32_t crc32;
 } secboot_rollback_record_t;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t seq;
+    uint32_t state;
+    uint32_t state_inv;
+    uint32_t security_counter;
+    uint32_t image_version;
+    uint32_t boot_attempts;
+    uint32_t crc32;
+} secboot_state_record_t;
+
 #define SECBOOT_N32_ROLLBACK_MAGIC      0x52424B31u /* 'RBK1' */
+#define SECBOOT_N32_STATE_MAGIC         0x42535431u /* 'BST1' */
+#define SECBOOT_N32_STATE_PENDING       1u
+#define SECBOOT_N32_STATE_CONFIRMED     2u
 
 static const xy_secboot_partition_t s_secboot_n32_parts[] = {
     { XY_SECBOOT_PART_BOOTLOADER,
@@ -453,6 +467,105 @@ static int secboot_rollback_write(uint32_t counter)
     return secboot_flash_write(addr, (const uint8_t *)&record, sizeof(record));
 }
 
+static int secboot_state_read(secboot_state_record_t *state)
+{
+    secboot_state_record_t best;
+    uint32_t addr;
+    uint8_t found = 0u;
+
+    if (state == NULL) {
+        return -1;
+    }
+
+    memset(&best, 0, sizeof(best));
+    for (addr = SECBOOT_N32_STATE_BASE_ADDR;
+         addr + sizeof(secboot_state_record_t) <=
+         SECBOOT_N32_STATE_BASE_ADDR + SECBOOT_N32_FLASH_PAGE_SIZE;
+         addr += sizeof(secboot_state_record_t)) {
+        secboot_state_record_t record;
+        uint32_t crc;
+
+        memcpy(&record, (const void *)addr, sizeof(record));
+        if (record.magic == 0xFFFFFFFFu) {
+            break;
+        }
+        if (record.magic != SECBOOT_N32_STATE_MAGIC ||
+            record.state_inv != ~record.state) {
+            continue;
+        }
+        if (record.state != SECBOOT_N32_STATE_PENDING &&
+            record.state != SECBOOT_N32_STATE_CONFIRMED) {
+            continue;
+        }
+
+        crc = crc32_update(0u, (const uint8_t *)&record,
+                           sizeof(record) - sizeof(record.crc32));
+        if (crc != record.crc32) {
+            continue;
+        }
+        if (!found || record.seq > best.seq) {
+            best = record;
+            found = 1u;
+        }
+    }
+
+    if (!found) {
+        return -1;
+    }
+    *state = best;
+    return 0;
+}
+
+static int secboot_state_write(uint32_t state,
+                               const xy_secboot_manifest_t *manifest,
+                               uint32_t boot_attempts)
+{
+    secboot_state_record_t current;
+    secboot_state_record_t record;
+    uint32_t seq = 1u;
+    uint32_t addr;
+
+    if (manifest == NULL ||
+        (state != SECBOOT_N32_STATE_PENDING && state != SECBOOT_N32_STATE_CONFIRMED)) {
+        return -1;
+    }
+
+    if (secboot_state_read(&current) == 0) {
+        seq = current.seq + 1u;
+    }
+
+    for (addr = SECBOOT_N32_STATE_BASE_ADDR;
+         addr + sizeof(secboot_state_record_t) <=
+         SECBOOT_N32_STATE_BASE_ADDR + SECBOOT_N32_FLASH_PAGE_SIZE;
+         addr += sizeof(secboot_state_record_t)) {
+        uint32_t magic = *(const uint32_t *)addr;
+        if (magic == 0xFFFFFFFFu) {
+            break;
+        }
+    }
+
+    if (addr + sizeof(secboot_state_record_t) >
+        SECBOOT_N32_STATE_BASE_ADDR + SECBOOT_N32_FLASH_PAGE_SIZE) {
+        if (secboot_flash_erase(SECBOOT_N32_STATE_BASE_ADDR,
+                                SECBOOT_N32_FLASH_PAGE_SIZE) != 0) {
+            return -1;
+        }
+        addr = SECBOOT_N32_STATE_BASE_ADDR;
+    }
+
+    record.magic = SECBOOT_N32_STATE_MAGIC;
+    record.seq = seq;
+    record.state = state;
+    record.state_inv = ~state;
+    record.security_counter = manifest->security_counter;
+    record.image_version = manifest->image_version;
+    record.boot_attempts = boot_attempts;
+    record.crc32 = crc32_update(0u, (const uint8_t *)&record,
+                                sizeof(record) - sizeof(record.crc32));
+
+    return secboot_flash_write(addr, (const uint8_t *)&record, sizeof(record));
+}
+
 static const xy_secboot_crypto_ops_t s_secboot_crypto_ops = {
     NULL,
     secboot_hash_init,
@@ -806,6 +919,12 @@ static void handle_end(const secboot_uart_frame_t *frame)
         return;
     }
 
+    if (secboot_state_write(SECBOOT_N32_STATE_PENDING, &s_manifest, 0u) != 0) {
+        send_nack(frame->seq, SECBOOT_N32_UART_REASON_FLASH_WRITE_FAILED,
+                  SECBOOT_N32_STATE_BASE_ADDR);
+        return;
+    }
+
     s_download_active = 0u;
     send_ack(frame->seq, s_manifest.entry_addr);
 }
@@ -847,6 +966,7 @@ int secboot_n32_v1_try_boot_app(uint32_t recovery_wait_ms)
 {
     xy_secboot_boot_action_t action;
     xy_secboot_manifest_t manifest;
+    secboot_state_record_t state;
     uint32_t start = mwTick;
 
     while ((int32_t)(mwTick - start) < (int32_t)recovery_wait_ms) {
@@ -868,6 +988,16 @@ int secboot_n32_v1_try_boot_app(uint32_t recovery_wait_ms)
         app_vector_check(manifest.image_addr, manifest.image_size) != 0) {
         xy_log_w("SecBoot-N32 App vector invalid");
         return -1;
+    }
+
+    if (secboot_state_read(&state) == 0 &&
+        state.state == SECBOOT_N32_STATE_PENDING &&
+        state.security_counter == manifest.security_counter) {
+        (void)secboot_state_write(SECBOOT_N32_STATE_PENDING,
+                                  &manifest,
+                                  state.boot_attempts + 1u);
+        xy_log_i("SecBoot-N32 pending App boot attempt=%u",
+                 (unsigned int)(state.boot_attempts + 1u));
     }
 
     xy_log_i("SecBoot-N32 jump App entry=%x", (unsigned int)manifest.entry_addr);

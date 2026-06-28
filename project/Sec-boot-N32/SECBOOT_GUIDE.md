@@ -27,7 +27,9 @@
 | App manifest 写入 | 有条件 | 仅 verify 成功后写入 |
 | App 跳转 | 已实现 | reset-time verify 后设置 MSP/VTOR 并跳转 |
 | Rollback counter 持久化 | 已实现 | `0x08006800` append-only CRC 记录 |
-| Boot state 持久化 | 未完成 | 后续添加 confirmed/pending 状态 |
+| Boot state 持久化 | 部分实现 | `PENDING`、boot attempts 和 PLB App 实验室 `CONFIRMED` 已接入，pending 失败策略后续添加 |
+
+注意：当前 PLB App 通过 `PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE=1` 直接写 `0x08006000` boot state page，只用于 bring-up 验证 confirmed 闭环。生产版本应改为 App 发起确认请求，由 SecBoot/private system 受控写入 boot state。
 
 重要：只有使用匹配开发 HMAC key 打包的镜像才能通过 `END` 并写入 App manifest。未带 HMAC 或 key 不匹配的包会返回 `IMAGE_VERIFY_FAILED`，避免把未认证镜像标记为可启动。
 
@@ -341,7 +343,7 @@ detail        4 bytes
 | 1 | 固定 UART5 transport，保证 HELLO/CAPS、MANIFEST、DATA 可重复跑通 |
 | 2 | 补 HMAC-SHA256 或 ECDSA-P256 验证后端 |
 | 3 | 实现 App manifest boot 检查和 App jump |
-| 4 | 持久化 boot state confirmed/pending 状态 |
+| 4 | 增加 pending 最大尝试次数和失败恢复策略 |
 | 5 | 加入 host fault injection 和自动化回归 |
 | 6 | 替换为生产密钥/生产算法策略 |
 

@@ -13,6 +13,35 @@ typedef struct {
 #define PLB_N32_EEPROM_ITEM_BOOT_COUNT 0u
 #define PLB_N32_EEPROM_ITEM_COUNT      1u
 #define PLB_N32_FEE_KEY_SERVER         0x00020001u
+#define PLB_N32_SECBOOT_MANIFEST_MAGIC 0x54425358u
+#define PLB_N32_SECBOOT_STATE_MAGIC    0x42535431u
+#define PLB_N32_SECBOOT_STATE_PENDING  1u
+#define PLB_N32_SECBOOT_STATE_CONFIRMED 2u
+
+typedef struct {
+    uint32_t magic;
+    uint16_t header_version;
+    uint16_t header_len;
+    uint32_t product_id;
+    uint32_t image_type;
+    uint32_t image_addr;
+    uint32_t image_size;
+    uint32_t entry_addr;
+    uint32_t image_version;
+    uint32_t min_boot_version;
+    uint32_t security_counter;
+} plb_n32_secboot_manifest_head_t;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t seq;
+    uint32_t state;
+    uint32_t state_inv;
+    uint32_t security_counter;
+    uint32_t image_version;
+    uint32_t boot_attempts;
+    uint32_t crc32;
+} plb_n32_secboot_state_record_t;
 
 static eflash_t s_plb_n32_fee;
 static bool s_plb_n32_fee_page_erased[PLB_N32_FEE_PAGE_COUNT];
@@ -20,6 +49,29 @@ static xy_eeprom_t s_plb_n32_eeprom;
 static uint32_t s_plb_n32_eeprom_shadow[PLB_N32_EEPROM_ITEM_COUNT];
 static uint8_t s_plb_n32_eeprom_valid[XY_EEPROM_BITMAP_SIZE(PLB_N32_EEPROM_ITEM_COUNT)];
 static uint32_t s_plb_n32_boot_count;
+
+static plb_n32_flash_ctx_t s_plb_n32_secboot_state_ctx = {
+    PLB_N32_SECBOOT_STATE_BASE_ADDR,
+    PLB_N32_FLASH_PAGE_SIZE,
+    PLB_N32_FLASH_PAGE_SIZE,
+    1u,
+};
+
+static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len)
+{
+    crc = ~crc;
+    while (len-- > 0u) {
+        crc ^= *data++;
+        for (uint8_t i = 0u; i < 8u; i++) {
+            if ((crc & 1u) != 0u) {
+                crc = (crc >> 1) ^ 0xedb88320u;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    return ~crc;
+}
 
 static plb_n32_flash_ctx_t s_plb_n32_fee_ctx = {
     PLB_N32_FEE_BASE_ADDR,
@@ -240,6 +292,109 @@ eflash_result_t plb_n32_boot_count_update(uint32_t *boot_count)
 uint32_t plb_n32_boot_count_get(void)
 {
     return s_plb_n32_boot_count;
+}
+
+static int secboot_state_read(plb_n32_secboot_state_record_t *state)
+{
+    plb_n32_secboot_state_record_t best;
+    uint32_t offset;
+    uint8_t found = 0u;
+
+    if (state == NULL) {
+        return -1;
+    }
+
+    memset(&best, 0, sizeof(best));
+    for (offset = 0u;
+         offset + sizeof(plb_n32_secboot_state_record_t) <= PLB_N32_FLASH_PAGE_SIZE;
+         offset += sizeof(plb_n32_secboot_state_record_t)) {
+        plb_n32_secboot_state_record_t record;
+        uint32_t crc;
+
+        memcpy(&record, (const void *)(PLB_N32_SECBOOT_STATE_BASE_ADDR + offset),
+               sizeof(record));
+        if (record.magic == 0xFFFFFFFFu) {
+            break;
+        }
+        if (record.magic != PLB_N32_SECBOOT_STATE_MAGIC ||
+            record.state_inv != ~record.state) {
+            continue;
+        }
+        crc = crc32_update(0u, (const uint8_t *)&record,
+                           sizeof(record) - sizeof(record.crc32));
+        if (crc != record.crc32) {
+            continue;
+        }
+        if (!found || record.seq > best.seq) {
+            best = record;
+            found = 1u;
+        }
+    }
+
+    if (!found) {
+        return -1;
+    }
+    *state = best;
+    return 0;
+}
+
+eflash_result_t plb_n32_secboot_confirm_app(void)
+{
+#if PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE
+    plb_n32_secboot_manifest_head_t manifest;
+    plb_n32_secboot_state_record_t current;
+    plb_n32_secboot_state_record_t record;
+    uint32_t seq = 1u;
+    uint32_t offset;
+
+    memset(&current, 0, sizeof(current));
+    memcpy(&manifest, (const void *)PLB_N32_SECBOOT_MANIFEST_BASE_ADDR,
+           sizeof(manifest));
+    if (manifest.magic != PLB_N32_SECBOOT_MANIFEST_MAGIC) {
+        return EFLASH_ERROR_INVALID_PARAM;
+    }
+
+    if (secboot_state_read(&current) == 0) {
+        if (current.state == PLB_N32_SECBOOT_STATE_CONFIRMED &&
+            current.security_counter == manifest.security_counter) {
+            return EFLASH_OK;
+        }
+        seq = current.seq + 1u;
+    }
+
+    for (offset = 0u;
+         offset + sizeof(plb_n32_secboot_state_record_t) <= PLB_N32_FLASH_PAGE_SIZE;
+         offset += sizeof(plb_n32_secboot_state_record_t)) {
+        uint32_t magic = *(const uint32_t *)(PLB_N32_SECBOOT_STATE_BASE_ADDR + offset);
+        if (magic == 0xFFFFFFFFu) {
+            break;
+        }
+    }
+
+    if (offset + sizeof(plb_n32_secboot_state_record_t) > PLB_N32_FLASH_PAGE_SIZE) {
+        if (flash_erase_page_fee(&s_plb_n32_secboot_state_ctx, 0u) != EFLASH_OK) {
+            return EFLASH_ERROR_ERASE_FAIL;
+        }
+        offset = 0u;
+    }
+
+    record.magic = PLB_N32_SECBOOT_STATE_MAGIC;
+    record.seq = seq;
+    record.state = PLB_N32_SECBOOT_STATE_CONFIRMED;
+    record.state_inv = ~record.state;
+    record.security_counter = manifest.security_counter;
+    record.image_version = manifest.image_version;
+    record.boot_attempts = current.boot_attempts;
+    record.crc32 = crc32_update(0u, (const uint8_t *)&record,
+                                sizeof(record) - sizeof(record.crc32));
+
+    return flash_write_fee(&s_plb_n32_secboot_state_ctx,
+                           offset,
+                           (const uint8_t *)&record,
+                           sizeof(record));
+#else
+    return EFLASH_ERROR_INVALID_PARAM;
+#endif
 }
 
 eflash_result_t plb_n32_server_endpoint_load(plb_n32_server_endpoint_t *endpoint)

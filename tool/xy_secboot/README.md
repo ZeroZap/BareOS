@@ -130,6 +130,8 @@ The MCU Flash write path requires DATA lengths to be 4-byte aligned. The packer 
 
 The UART flasher validates that each ACK/NACK carries the sequence number of the frame currently in flight. Stale ACKs from delayed serial delivery are ignored and retried instead of advancing the DATA offset.
 
+The PLB-N32 demo App writes a lab-only SecBoot `CONFIRMED` boot-state record after basic initialization succeeds. This is guarded by `PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE` and stops subsequent reset-time boots from incrementing the pending boot-attempt counter. Production firmware should replace this direct Flash write with a controlled SecBoot/private-system confirmation path.
+
 `tool/xy_secboot/dev_hmac_key.txt` is the lab-only key wired into the SecBoot-N32 development build. Override it with `--hmac-key` for CLI packaging or `SECBOOT_HMAC_KEY=...` for the PLB Makefile target.
 
 ## Current Security State

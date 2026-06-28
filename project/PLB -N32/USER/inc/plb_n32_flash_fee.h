@@ -19,6 +19,13 @@ extern "C" {
 #define PLB_N32_FEE_BASE_ADDR         \
     (PLB_N32_FLASH_BASE_ADDR + PLB_N32_FLASH_TOTAL_SIZE - PLB_N32_FEE_TOTAL_SIZE)
 
+#define PLB_N32_SECBOOT_STATE_BASE_ADDR     0x08006000u
+#define PLB_N32_SECBOOT_MANIFEST_BASE_ADDR  0x08007000u
+
+#ifndef PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE
+#define PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE 1u
+#endif
+
 #define PLB_N32_EEPROM_PAGE_COUNT     2u
 #define PLB_N32_EEPROM_TOTAL_SIZE     \
     (PLB_N32_FLASH_PAGE_SIZE * PLB_N32_EEPROM_PAGE_COUNT)
@@ -39,6 +46,7 @@ xy_eeprom_t *plb_n32_eeprom(void);
 
 eflash_result_t plb_n32_boot_count_update(uint32_t *boot_count);
 uint32_t plb_n32_boot_count_get(void);
+eflash_result_t plb_n32_secboot_confirm_app(void);
 
 eflash_result_t plb_n32_server_endpoint_load(plb_n32_server_endpoint_t *endpoint);
 eflash_result_t plb_n32_server_endpoint_save(const plb_n32_server_endpoint_t *endpoint);

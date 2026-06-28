@@ -63,6 +63,8 @@ int main(void)
     xy_log_i("PLB-N32 boot_count=%u update=%d",
              (unsigned int)boot_count,
              boot_count_update);
+    xy_log_i("PLB-N32 secboot confirm=%d",
+             (int)plb_n32_secboot_confirm_app());
     if (plb_n32_server_endpoint_load(&server) == EFLASH_OK) {
         xy_log_i("PLB-N32 server ip=%x port=%u",
                  ((unsigned int)server.ip[0] << 24)
