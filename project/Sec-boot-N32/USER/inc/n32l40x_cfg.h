@@ -30,6 +30,7 @@ extern void n32_uart5_secboot_isr(void);
 extern void n32_uart5_secboot_write_str(const char *str);
 extern int n32_uart5_secboot_read(uint8_t *data, size_t len, uint32_t timeout_ms);
 extern int n32_uart5_secboot_write(const uint8_t *data, size_t len, uint32_t timeout_ms);
+extern int n32_uart5_secboot_wait_tx_done(uint32_t timeout_ms);
 extern volatile uint32_t g_n32_uart5_rx_count;
 extern volatile uint32_t g_n32_uart5_tx_count;
 extern volatile uint32_t g_n32_uart5_rx_drop_count;

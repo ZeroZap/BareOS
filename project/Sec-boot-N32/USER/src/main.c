@@ -8,11 +8,12 @@
 #include "main.h"
 #include "secboot_n32_v1.h"
 #include "xy_log.h"
-#include <stdio.h>
 #include <stdint.h>
 /* NTFx CODE END Include*/
 
 extern __IO uint32_t mwTick;
+
+#define SECBOOT_ENABLE_IWDG 0
 
 static void secboot_log_reset_flags(void)
 {
@@ -27,8 +28,8 @@ static void secboot_log_reset_flags(void)
 }
 
 /**
- * @brief  Main program.
- */
+  * @brief  Main program.
+  */
 int main(void)
 {
     uint32_t next_heartbeat;
@@ -42,7 +43,13 @@ int main(void)
     n32_uart5_secboot_init();
     xy_log_i("SecBoot-N32 UART5 secboot V1 transport ready");
     secboot_log_reset_flags();
-    IWDG_Configuration();
+#if SECBOOT_ENABLE_IWDG
+    if (IWDG_Configuration()) {
+        xy_log_i("SecBoot-N32 IWDG ready");
+    } else {
+        xy_log_w("SecBoot-N32 IWDG init timeout");
+    }
+#endif
     secboot_n32_v1_init();
     /* NTFx CODE END Config*/
     xy_log_i("SecBoot-N32 main loop start");
@@ -51,11 +58,13 @@ int main(void)
     next_heartbeat = mwTick + 1000U;
     while(1)
     {
+#if SECBOOT_ENABLE_IWDG
         IWDG_ReloadKey();
+#endif
         n32_uart5_secboot_poll();
         secboot_n32_v1_poll();
         if ((int32_t)(mwTick - next_heartbeat) >= 0) {
-            xy_log_i("SecBoot-N32 heartbeat UART5 rx=%u tx=%u rb=%u drop=%u last=%02x",
+            xy_log_i("SecBoot-N32 heartbeat UART5 rx=%u tx=%u rb=%u drop=%u last=%x",
                      (unsigned int)g_n32_uart5_rx_count,
                      (unsigned int)g_n32_uart5_tx_count,
                      (unsigned int)g_n32_uart5_rb_pending,

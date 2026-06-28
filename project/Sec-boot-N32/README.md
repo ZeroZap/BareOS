@@ -50,7 +50,7 @@ UART5 secboot traffic uses `XY Secboot UART Transport v1` frames:
 | Packet | Direction | Status |
 |---|---|---|
 | `HELLO` | Host to bootloader | Implemented, replies `CAPS` |
-| `CAPS` | Bootloader to host | Reports v1, 256-byte max payload, product, suite, app layout |
+| `CAPS` | Bootloader to host | Reports v1, 512-byte max payload, product, suite, app layout |
 | `MANIFEST` | Host to bootloader | Basic manifest validation, erases App image area |
 | `DATA` | Host to bootloader | Strict seq/offset, CRC32 payload check, internal Flash write/readback |
 | `END` | Host to bootloader | Runs `xy_secboot_single_verify_active`, writes manifest only after success |
@@ -70,20 +70,48 @@ session_id  4 bytes
 offset      4 bytes
 length      2 bytes
 header_crc  2 bytes   CRC16/CCITT over header with this field zeroed
-payload     N bytes   max 256 bytes
+payload     N bytes   max 512 bytes
 payload_crc 4 bytes   CRC32 over payload
 ```
 
+## After Flash
+
+`END ACK` means the App image was written, verified, and the manifest was committed. It does not currently jump to the App immediately. The V1 bootloader remains in its main loop and keeps printing heartbeat logs until reset.
+
+Recommended modes:
+
+| Phase | Mode | Reason |
+|---|---|---|
+| Bring-up/debug | Use host `flash --reset` after `END ACK` | Lowest-risk path; keeps update and boot validation separate |
+| Production | Verify manifest at reset, then jump to App | Required so power-cycle/reset boots the verified App without a host |
+
+Example debug command:
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM12 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --reset
+```
+
+If `--reset` is omitted, repeated `SecBoot-N32 heartbeat` logs after `END ACK` are expected.
+
 ## Security State
 
-V1 can receive and program an App image, but it intentionally does not accept an image as bootable unless `xy_secboot_single_verify_active()` succeeds. The current N32 port supplies SHA-256 hashing and Flash/UART operations, while public-key verification/key provisioning still returns unsupported. This prevents accidentally shipping an unsigned image path.
+V1 can receive and program an App image, but it intentionally does not accept an image as bootable unless `xy_secboot_single_verify_active()` succeeds. The current N32 development build supplies SHA-256 hashing, Flash/UART operations, and a lab-only HMAC-SHA256 manifest MAC using `tool/xy_secboot/dev_hmac_key.txt`.
+
+This HMAC path is only for bring-up. Production still needs a protected root key or public-key verification path before release.
 
 ## Next Steps
 
 | Step | Task |
 |---:|---|
 | 1 | Add boot public key storage/provisioning |
-| 2 | Add ECDSA-P256 verification backend or switch policy to HMAC-SHA256 for lab builds |
+| 2 | Replace lab HMAC path with production ECDSA-P256 or protected-key MAC backend |
 | 3 | Add app jump after verified manifest boot check |
 | 4 | Persist boot state/rollback counter in reserved Flash pages |
 | 5 | Add host `xy-secpack` and `xy-secflash` tools |

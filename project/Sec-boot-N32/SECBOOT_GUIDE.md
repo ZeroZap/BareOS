@@ -20,14 +20,15 @@
 | UART5 HELLO/CAPS | 已实现 | 上位机可探测 bootloader 能力 |
 | MANIFEST 接收 | 已实现 | MCU 做基础 manifest 检查并擦除 App 区 |
 | DATA 传输 | 已实现 | stop-and-wait，CRC32，seq/offset，Flash 写入后读回 |
-| END 校验 | 部分实现 | MCU 调用 `xy_secboot_single_verify_active()` |
+| END 校验 | 已实现 | MCU 调用 `xy_secboot_single_verify_active()` |
 | SHA-256 image hash | 已接入 | N32 port 提供 SHA-256 hash ops |
-| 签名/公钥验证 | 未完成 | 当前会拒绝未完成验证的镜像 |
+| 开发 HMAC 验证 | 已接入 | 使用 `tool/xy_secboot/dev_hmac_key.txt`，仅限实验室 |
+| 签名/公钥验证 | 未完成 | 生产级公钥验证后续补齐 |
 | App manifest 写入 | 有条件 | 仅 verify 成功后写入 |
 | App 跳转 | 未完成 | 后续添加 |
 | Boot state/rollback 持久化 | 未完成 | 后续添加 |
 
-重要：当前 `END` 阶段可能返回 `IMAGE_VERIFY_FAILED`，这是预期行为。当前版本不能把未完成签名验证的镜像标记为可启动，避免形成不安全 bootloader。
+重要：只有使用匹配开发 HMAC key 打包的镜像才能通过 `END` 并写入 App manifest。未带 HMAC 或 key 不匹配的包会返回 `IMAGE_VERIFY_FAILED`，避免把未认证镜像标记为可启动。
 
 ## 硬件连接
 
@@ -137,7 +138,8 @@ python tool/xy_secboot/xy_secboot.py pack \
   --image-addr 0x08007800 \
   --entry-addr 0x08007800 \
   --image-version 1 \
-  --security-counter 1
+  --security-counter 1 \
+  --hmac-key tool/xy_secboot/dev_hmac_key.txt
 ```
 
 查看包信息：
@@ -161,7 +163,7 @@ image_hash_sha256
 signature_head
 ```
 
-当前 `signature_head` 可能全 0，因为 MCU 签名验证后端还没有完成。
+使用开发 HMAC key 打包时，`signature_head` 会显示 HMAC-SHA256 tag 的前 32 字节。若未传 `--hmac-key`，该字段全 0，MCU 会在 `END` 阶段拒绝镜像。
 
 ## CLI 刷写
 
@@ -192,7 +194,60 @@ DATA seq/offset -> ACK/NACK
 END -> ACK/ERROR
 ```
 
-若 MCU 端签名验证未完成，`END` 可能返回 `ERROR reason=IMAGE_VERIFY_FAILED`。这表示传输链路可继续验证，但镜像不会被接受为可启动。
+若包未使用匹配 HMAC key，`END` 会返回 `ERROR reason=IMAGE_VERIFY_FAILED`。使用 `tool/xy_secboot/dev_hmac_key.txt` 打包后，`END` 应返回 `ACK` 并写入 App manifest。
+
+`END ACK` 只表示镜像写入、校验和 manifest 提交完成；当前 V1 bootloader 不会在 `END ACK` 后立即跳转 App，因此 UART4 继续输出 `SecBoot-N32 heartbeat` 属于预期行为。
+
+调试阶段推荐在刷写命令后追加 `--reset`，让主机在 `END ACK` 后发送 RESET：
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM12 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --reset
+```
+
+产品阶段应补齐 bootloader 复位启动路径：读取 `0x08007000` manifest，调用验证逻辑确认 App 镜像可信，然后设置 MSP/VTOR 并跳转 `0x08007800`。这样设备断电重启或看门狗复位后也能进入已验证 App，不依赖主机命令。
+
+## PLB-N32 作为 App 的自动化流程
+
+`project/PLB -N32` 已按 SecBoot App slot 链接：
+
+| 项目 | 值 |
+|---|---:|
+| App Flash ORIGIN | `0x08007800` |
+| App Flash LENGTH | `0x16800` |
+| Vector table offset | `0x7800` |
+
+本地构建 SecBoot、构建 PLB App、生成并检查 `.sbp`：
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --clean
+```
+
+同时烧录 SecBoot bootloader：
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --clean --flash-boot
+```
+
+通过 UART5 刷写 PLB App 包：
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12
+```
+
+刷写后抓取 UART4 log：
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12 --capture-log COM8
+```
+
+当前 MCU 端开发 HMAC 验证已接入，但 App jump 还未完成，因此自动化流程可以稳定验证构建、打包、MANIFEST/DATA 传输、Flash 写入和 END 认证链路；完整启动 PLB App 仍需要后续补齐 reset-time verify + jump app。
 
 ## GUI 使用
 
@@ -251,7 +306,7 @@ detail        4 bytes
 | `BAD_MANIFEST` | 地址、产品 ID、大小不匹配 | 检查 pack 参数 |
 | `BAD_OFFSET` | 传输 offset 不连续 | 重新刷写，检查串口稳定性 |
 | `FLASH_WRITE_FAILED` | Flash 未擦除、越界或供电异常 | 确认 App 区地址和大小 |
-| `IMAGE_VERIFY_FAILED` | 当前签名验证后端未完成或镜像损坏 | 当前阶段预期可能出现，后续补签名验证 |
+| `IMAGE_VERIFY_FAILED` | 未使用匹配 HMAC key、镜像损坏或生产签名后端未接入 | 用 `--hmac-key tool/xy_secboot/dev_hmac_key.txt` 重新打包并重刷 |
 
 ## 开发顺序建议
 

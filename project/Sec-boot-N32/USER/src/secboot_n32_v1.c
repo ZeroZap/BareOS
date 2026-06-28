@@ -74,6 +74,9 @@ static uint32_t s_session_id;
 static uint8_t s_payload[SECBOOT_N32_UART_V1_MAX_PAYLOAD];
 static xy_secboot_single_ctx_t s_secboot_ctx;
 
+static const uint8_t s_secboot_dev_hmac_key[] =
+    "xy-secboot-n32-dev-hmac-key-v1";
+
 static uint16_t le16_read(const uint8_t *p)
 {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
@@ -237,6 +240,91 @@ static int secboot_hash_final(void *ctx, uint8_t *digest, size_t *digest_len)
     return 0;
 }
 
+static int secboot_hmac_sha256(const uint8_t *key,
+                               size_t key_len,
+                               const uint8_t *data,
+                               size_t data_len,
+                               uint8_t digest[XY_SHA256_DIGEST_SIZE])
+{
+    uint8_t k_ipad[XY_SHA256_BLOCK_SIZE];
+    uint8_t k_opad[XY_SHA256_BLOCK_SIZE];
+    uint8_t temp_key[XY_SHA256_DIGEST_SIZE];
+    const uint8_t *actual_key = key;
+    size_t actual_key_len = key_len;
+    xy_sha256_ctx_t ctx;
+
+    if (key == NULL || data == NULL || digest == NULL) {
+        return -1;
+    }
+
+    if (key_len > XY_SHA256_BLOCK_SIZE) {
+        if (xy_sha256_hash(key, key_len, temp_key) != 0) {
+            return -1;
+        }
+        actual_key = temp_key;
+        actual_key_len = XY_SHA256_DIGEST_SIZE;
+    }
+
+    memset(k_ipad, 0, sizeof(k_ipad));
+    memset(k_opad, 0, sizeof(k_opad));
+    memcpy(k_ipad, actual_key, actual_key_len);
+    memcpy(k_opad, actual_key, actual_key_len);
+
+    for (size_t i = 0u; i < XY_SHA256_BLOCK_SIZE; i++) {
+        k_ipad[i] ^= 0x36u;
+        k_opad[i] ^= 0x5cu;
+    }
+
+    if (xy_sha256_init(&ctx) != 0 ||
+        xy_sha256_update(&ctx, k_ipad, sizeof(k_ipad)) != 0 ||
+        xy_sha256_update(&ctx, data, data_len) != 0 ||
+        xy_sha256_final(&ctx, digest) != 0) {
+        xy_secboot_secure_zero(&ctx, sizeof(ctx));
+        xy_secboot_secure_zero(k_ipad, sizeof(k_ipad));
+        xy_secboot_secure_zero(k_opad, sizeof(k_opad));
+        xy_secboot_secure_zero(temp_key, sizeof(temp_key));
+        return -1;
+    }
+
+    if (xy_sha256_init(&ctx) != 0 ||
+        xy_sha256_update(&ctx, k_opad, sizeof(k_opad)) != 0 ||
+        xy_sha256_update(&ctx, digest, XY_SHA256_DIGEST_SIZE) != 0 ||
+        xy_sha256_final(&ctx, digest) != 0) {
+        xy_secboot_secure_zero(&ctx, sizeof(ctx));
+        xy_secboot_secure_zero(k_ipad, sizeof(k_ipad));
+        xy_secboot_secure_zero(k_opad, sizeof(k_opad));
+        xy_secboot_secure_zero(temp_key, sizeof(temp_key));
+        return -1;
+    }
+
+    xy_secboot_secure_zero(&ctx, sizeof(ctx));
+    xy_secboot_secure_zero(k_ipad, sizeof(k_ipad));
+    xy_secboot_secure_zero(k_opad, sizeof(k_opad));
+    xy_secboot_secure_zero(temp_key, sizeof(temp_key));
+    return 0;
+}
+
+static int secboot_mac(xy_secboot_alg_t alg,
+                       const uint8_t *key,
+                       size_t key_len,
+                       const uint8_t *data,
+                       size_t data_len,
+                       uint8_t *tag,
+                       size_t *tag_len)
+{
+    if (alg != XY_SECBOOT_ALG_MAC_HMAC_SHA256 || tag_len == NULL ||
+        *tag_len < XY_SHA256_DIGEST_SIZE) {
+        return -1;
+    }
+
+    if (secboot_hmac_sha256(key, key_len, data, data_len, tag) != 0) {
+        return -1;
+    }
+
+    *tag_len = XY_SHA256_DIGEST_SIZE;
+    return 0;
+}
+
 static int secboot_unsupported_verify(xy_secboot_alg_t alg,
                                       const uint8_t *pub_key,
                                       size_t pub_key_len,
@@ -261,12 +349,17 @@ static int secboot_get_key(xy_secboot_key_type_t type,
                            uint8_t *key,
                            size_t *key_len)
 {
-    (void)type;
     (void)key_id;
     (void)key_id_len;
-    (void)key;
-    (void)key_len;
-    return -1;
+
+    if (type != XY_SECBOOT_KEY_BOOT_MAC || key == NULL || key_len == NULL ||
+        *key_len < sizeof(s_secboot_dev_hmac_key) - 1u) {
+        return -1;
+    }
+
+    memcpy(key, s_secboot_dev_hmac_key, sizeof(s_secboot_dev_hmac_key) - 1u);
+    *key_len = sizeof(s_secboot_dev_hmac_key) - 1u;
+    return 0;
 }
 
 static int secboot_rollback_read(uint32_t *counter)
@@ -284,7 +377,7 @@ static const xy_secboot_crypto_ops_t s_secboot_crypto_ops = {
     secboot_hash_update,
     secboot_hash_final,
     secboot_unsupported_verify,
-    NULL,
+    secboot_mac,
     NULL,
     NULL,
     secboot_get_key,
@@ -377,6 +470,11 @@ static void send_ack(uint16_t seq, uint32_t detail)
 
 static void send_nack(uint16_t seq, uint16_t reason, uint32_t detail)
 {
+    xy_log_w("SecBoot-N32 NACK seq=%u reason=%u next=%x detail=%x",
+             (unsigned int)seq,
+             (unsigned int)reason,
+             (unsigned int)s_expected_offset,
+             (unsigned int)detail);
     send_status(SECBOOT_N32_UART_PKT_NACK, seq, reason, s_expected_offset, detail);
 }
 
@@ -605,10 +703,16 @@ void secboot_n32_v1_init(void)
 void secboot_n32_v1_send_banner(void)
 {
     static const char banner[] =
-        "XY_SECBOOT_N32_V1 UART5 READY: send SBv1 HELLO or '?'\r\n";
+        "\r\n"
+        "XY_SECBOOT_N32_V1\r\n"
+        "UART5: 115200 8N1, TX=PB4 RX=PB5\r\n"
+        "BOOT: 0x08000000+0x6000\r\n"
+        "MANIFEST: 0x08007000\r\n"
+        "APP: 0x08007800+0x16800\r\n"
+        "CMD: '?' banner, 'p' print layout on UART4, SBv1 binary flash\r\n";
     (void)n32_uart5_secboot_write((const uint8_t *)banner,
-                                  sizeof(banner) - 1u,
-                                  1000u);
+                                   sizeof(banner) - 1u,
+                                   1000u);
 }
 
 void secboot_n32_v1_print_layout(void)
@@ -643,11 +747,17 @@ void secboot_n32_v1_poll(void)
 
     rc = read_frame(&frame, first, s_payload, 1000u);
     if (rc < 0) {
+        uint16_t reason = rc == -2 ? SECBOOT_N32_UART_REASON_BAD_HEADER_CRC :
+                          rc == -4 ? SECBOOT_N32_UART_REASON_BAD_PAYLOAD_CRC :
+                                     SECBOOT_N32_UART_REASON_BAD_LENGTH;
+        xy_log_w("SecBoot-N32 read_frame NACK seq=%u reason=%u next=%x detail=%x",
+                 (unsigned int)s_expected_seq,
+                 (unsigned int)reason,
+                 (unsigned int)s_expected_offset,
+                 (unsigned int)(-rc));
         send_status(SECBOOT_N32_UART_PKT_NACK,
                     s_expected_seq,
-                    rc == -2 ? SECBOOT_N32_UART_REASON_BAD_HEADER_CRC :
-                    rc == -4 ? SECBOOT_N32_UART_REASON_BAD_PAYLOAD_CRC :
-                               SECBOOT_N32_UART_REASON_BAD_LENGTH,
+                    reason,
                     s_expected_offset,
                     (uint32_t)(-rc));
         return;
@@ -671,6 +781,7 @@ void secboot_n32_v1_poll(void)
         break;
     case SECBOOT_N32_UART_PKT_RESET:
         send_ack(frame.seq, 0u);
+        (void)n32_uart5_secboot_wait_tx_done(100u);
         NVIC_SystemReset();
         break;
     default:

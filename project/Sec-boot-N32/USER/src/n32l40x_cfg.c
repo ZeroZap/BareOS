@@ -17,14 +17,24 @@ volatile uint32_t g_n32_uart5_rb_pending;
 volatile uint8_t g_n32_uart5_last_rx;
 
 static xy_rb_t s_uart5_rx_rb;
-static uint8_t s_uart5_rx_pool[128];
+static uint8_t s_uart5_rx_pool[1024];
+
+#define SECBOOT_UART              UART5
+#define SECBOOT_UART_IRQn         UART5_IRQn
+#define SECBOOT_UART_CLK          RCC_APB2_PERIPH_UART5
+#define SECBOOT_UART_TX_PORT      GPIOB
+#define SECBOOT_UART_RX_PORT      GPIOB
+#define SECBOOT_UART_TX_PIN       GPIO_PIN_4
+#define SECBOOT_UART_RX_PIN       GPIO_PIN_5
+#define SECBOOT_UART_TX_AF        GPIO_AF6_UART5
+#define SECBOOT_UART_RX_AF        GPIO_AF7_UART5
 
 static void n32_uart5_secboot_irq_enable(void)
 {
     NVIC_InitType NVIC_InitStructure;
 
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
-    NVIC_InitStructure.NVIC_IRQChannel = UART5_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannel = SECBOOT_UART_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
@@ -46,11 +56,16 @@ void SysTick_Delayms(uint32_t Delayms)
 
 void n32_debug_log_char(char ch)
 {
+    uint32_t spin = 100000u;
+
     if (ch == '\n') {
         n32_debug_log_char('\r');
     }
 
     while (USART_GetFlagStatus(UART4, USART_FLAG_TXDE) == RESET) {
+        if (spin-- == 0u) {
+            return;
+        }
     }
     USART_SendData(UART4, (uint16_t)ch);
     g_n32_debug_log_last_char = (uint8_t)ch;
@@ -71,9 +86,9 @@ void xy_log_char(char ch)
 
 void n32_uart5_secboot_send_char(char ch)
 {
-    while (USART_GetFlagStatus(UART5, USART_FLAG_TXDE) == RESET) {
+    while (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_TXDE) == RESET) {
     }
-    USART_SendData(UART5, (uint16_t)ch);
+    USART_SendData(SECBOOT_UART, (uint16_t)ch);
     g_n32_uart5_tx_count++;
 }
 
@@ -87,16 +102,26 @@ void n32_uart5_secboot_write_str(const char *str)
 void n32_uart5_secboot_init(void)
 {
     xy_rb_init(&s_uart5_rx_rb, s_uart5_rx_pool, (int32_t)sizeof(s_uart5_rx_pool));
-    while (USART_GetFlagStatus(UART5, USART_FLAG_RXDNE) == SET) {
-        (void)USART_ReceiveData(UART5);
+    USART_EnableDMA(SECBOOT_UART, USART_DMAREQ_RX, DISABLE);
+    while (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_RXDNE) == SET) {
+        (void)USART_ReceiveData(SECBOOT_UART);
     }
-    USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);
-    USART_ConfigInt(UART5, USART_INT_ERRF, ENABLE);
+    USART_ConfigInt(SECBOOT_UART, USART_INT_RXDNE, ENABLE);
+    USART_ConfigInt(SECBOOT_UART, USART_INT_ERRF, ENABLE);
     n32_uart5_secboot_irq_enable();
 }
 
 void n32_uart5_secboot_poll(void)
 {
+    while (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_RXDNE) == SET) {
+        uint8_t ch = (uint8_t)USART_ReceiveData(SECBOOT_UART);
+        g_n32_uart5_last_rx = ch;
+        g_n32_uart5_rx_count++;
+        if (xy_rb_putchar(&s_uart5_rx_rb, ch) == 0U) {
+            g_n32_uart5_rx_drop_count++;
+        }
+    }
+
     g_n32_uart5_rb_pending = (uint32_t)xy_rb_data_len(&s_uart5_rx_rb);
 }
 
@@ -137,8 +162,8 @@ int n32_uart5_secboot_write(const uint8_t *data, size_t len, uint32_t timeout_ms
 
     start = mwTick;
     while (count < len) {
-        if (USART_GetFlagStatus(UART5, USART_FLAG_TXDE) == SET) {
-            USART_SendData(UART5, (uint16_t)data[count]);
+        if (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_TXDE) == SET) {
+            USART_SendData(SECBOOT_UART, (uint16_t)data[count]);
             g_n32_uart5_tx_count++;
             count++;
             start = mwTick;
@@ -154,10 +179,24 @@ int n32_uart5_secboot_write(const uint8_t *data, size_t len, uint32_t timeout_ms
     return (int)count;
 }
 
+int n32_uart5_secboot_wait_tx_done(uint32_t timeout_ms)
+{
+    uint32_t start = mwTick;
+
+    while (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_TXC) == RESET) {
+        if ((int32_t)(mwTick - start) >= (int32_t)timeout_ms) {
+            return -1;
+        }
+        IWDG_ReloadKey();
+    }
+
+    return 0;
+}
+
 void n32_uart5_secboot_isr(void)
 {
-    if (USART_GetIntStatus(UART5, USART_INT_RXDNE) == SET) {
-        uint8_t ch = (uint8_t)USART_ReceiveData(UART5);
+    if (USART_GetIntStatus(SECBOOT_UART, USART_INT_RXDNE) == SET) {
+        uint8_t ch = (uint8_t)USART_ReceiveData(SECBOOT_UART);
         g_n32_uart5_last_rx = ch;
         g_n32_uart5_rx_count++;
         if (xy_rb_putchar(&s_uart5_rx_rb, ch) == 0U) {
@@ -165,12 +204,12 @@ void n32_uart5_secboot_isr(void)
         }
     }
 
-    if ((USART_GetFlagStatus(UART5, USART_FLAG_OREF) == SET) ||
-        (USART_GetFlagStatus(UART5, USART_FLAG_NEF) == SET) ||
-        (USART_GetFlagStatus(UART5, USART_FLAG_FEF) == SET) ||
-        (USART_GetFlagStatus(UART5, USART_FLAG_PEF) == SET)) {
-        (void)UART5->STS;
-        (void)UART5->DAT;
+    if ((USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_OREF) == SET) ||
+        (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_NEF) == SET) ||
+        (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_FEF) == SET) ||
+        (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_PEF) == SET)) {
+        (void)SECBOOT_UART->STS;
+        (void)SECBOOT_UART->DAT;
     }
 }
 
@@ -231,7 +270,7 @@ bool GPIO_Configuration(void)
     GPIO_InitType GPIO_InitStructure;
 
     GPIO_InitStruct(&GPIO_InitStructure);
-    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOB | RCC_APB2_PERIPH_AFIO, ENABLE);
+    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOA | RCC_APB2_PERIPH_GPIOB | RCC_APB2_PERIPH_AFIO, ENABLE);
 
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Pull = GPIO_Pull_Up;
@@ -241,18 +280,18 @@ bool GPIO_Configuration(void)
     GPIO_InitStructure.Pin = GPIO_PIN_0;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 
-    GPIO_InitStructure.GPIO_Alternate = GPIO_AF6_UART5;
-    GPIO_InitStructure.Pin = GPIO_PIN_8;
-    GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+    GPIO_InitStructure.GPIO_Alternate = SECBOOT_UART_TX_AF;
+    GPIO_InitStructure.Pin = SECBOOT_UART_TX_PIN;
+    GPIO_InitPeripheral(SECBOOT_UART_TX_PORT, &GPIO_InitStructure);
 
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Input;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Alternate = GPIO_AF6_UART4;
     GPIO_InitStructure.Pin = GPIO_PIN_1;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 
-    GPIO_InitStructure.GPIO_Alternate = GPIO_AF6_UART5;
-    GPIO_InitStructure.Pin = GPIO_PIN_9;
-    GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+    GPIO_InitStructure.GPIO_Alternate = SECBOOT_UART_RX_AF;
+    GPIO_InitStructure.Pin = SECBOOT_UART_RX_PIN;
+    GPIO_InitPeripheral(SECBOOT_UART_RX_PORT, &GPIO_InitStructure);
     return true;
 }
 
@@ -261,7 +300,7 @@ bool USART_Configuration(void)
     USART_InitType USART_InitStructure;
 
     USART_StructInit(&USART_InitStructure);
-    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_UART4 | RCC_APB2_PERIPH_UART5, ENABLE);
+    RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_UART4 | SECBOOT_UART_CLK, ENABLE);
 
     USART_InitStructure.BaudRate = 115200;
     USART_InitStructure.WordLength = USART_WL_8B;
@@ -274,19 +313,24 @@ bool USART_Configuration(void)
     USART_ConfigInt(UART4, USART_INT_IDLEF, DISABLE);
     USART_Enable(UART4, ENABLE);
 
-    USART_Init(UART5, &USART_InitStructure);
-    USART_ConfigInt(UART5, USART_INT_IDLEF, DISABLE);
-    USART_Enable(UART5, ENABLE);
+    USART_Init(SECBOOT_UART, &USART_InitStructure);
+    USART_ConfigInt(SECBOOT_UART, USART_INT_IDLEF, DISABLE);
+    USART_Enable(SECBOOT_UART, ENABLE);
     return true;
 }
 
 bool IWDG_Configuration(void)
 {
+    uint32_t spin = 1000000u;
+
     IWDG_WriteConfig(IWDG_WRITE_ENABLE);
     IWDG_SetPrescalerDiv(IWDG_PRESCALER_DIV256);
     IWDG_CntReload(0x0fff);
     while (IWDG_GetStatus(IWDG_PVU_FLAG) == SET ||
            IWDG_GetStatus(IWDG_CRVU_FLAG) == SET) {
+        if (spin-- == 0u) {
+            return false;
+        }
     }
     IWDG_ReloadKey();
     IWDG_WriteConfig(IWDG_WRITE_DISABLE);

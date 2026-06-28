@@ -35,7 +35,8 @@ python tool/xy_secboot/xy_secboot.py pack \
   --image-addr 0x08007800 \
   --entry-addr 0x08007800 \
   --image-version 1 \
-  --security-counter 1
+  --security-counter 1 \
+  --hmac-key tool/xy_secboot/dev_hmac_key.txt
 ```
 
 Inspect a package:
@@ -56,10 +57,51 @@ python tool/xy_secboot/xy_secboot.py flash \
   --retries 10
 ```
 
+During bring-up, add `--reset` to reset the MCU after `END ACK`:
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM12 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --reset
+```
+
+`END ACK` means the image was written, verified, and the App manifest was committed. The current SecBoot-N32 V1 firmware does not immediately jump to the App after `END ACK`; without `--reset`, continuing bootloader heartbeat logs are expected. Production firmware should boot by verifying the committed manifest on reset and then jumping to the App entry.
+
 Launch GUI:
 
 ```bash
 python tool/xy_secboot/xy_secboot.py gui
+```
+
+## PLB App Flow
+
+Build SecBoot, build PLB-N32 as the App slot image, package it, and inspect the package:
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --clean
+```
+
+Also flash the SecBoot bootloader:
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --clean --flash-boot
+```
+
+Flash the packaged PLB app through UART5:
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12
+```
+
+Capture UART4 logs after the flow:
+
+```bash
+python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12 --capture-log COM8
 ```
 
 ## Package Notes
@@ -68,10 +110,12 @@ The packer emits the `.sbp` package described in `components/xy_secboot/docs/SEC
 
 The MCU Flash write path requires DATA lengths to be 4-byte aligned. The packer pads the input image with `0xFF` to a 4-byte boundary before calculating the image hash and manifest fields.
 
+`tool/xy_secboot/dev_hmac_key.txt` is the lab-only key wired into the SecBoot-N32 development build. Override it with `--hmac-key` for CLI packaging or `SECBOOT_HMAC_KEY=...` for the PLB Makefile target.
+
 ## Current Security State
 
 The tool can build packages, send `HELLO`, transfer `MANIFEST` and `DATA`, and send `END`.
 
-SecBoot-N32 currently has SHA-256 hashing wired in, but final public-key verification/key provisioning is still pending on the MCU side. Until that backend is added, `END` may return `IMAGE_VERIFY_FAILED`. That is expected and prevents accidentally accepting unsigned images.
+SecBoot-N32 currently has SHA-256 hashing and a lab-only HMAC-SHA256 verification path wired in. Packages built without the matching HMAC key still fail at `END` with `IMAGE_VERIFY_FAILED`; packages built with `tool/xy_secboot/dev_hmac_key.txt` can complete `END` and write the App manifest.
 
-Do not commit real production keys. Development HMAC key support is provided only for lab packages and future MCU backend work.
+Do not commit real production keys. The checked-in development HMAC key is not a production root of trust.

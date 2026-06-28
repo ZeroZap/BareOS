@@ -183,7 +183,9 @@ class SecbootUartClient:
             last_ack = ack
             if ack.ok:
                 return ack
-            if ack.reason in (Reason.BAD_HEADER_CRC, Reason.BAD_PAYLOAD_CRC, Reason.BUSY):
+            if ack.reason in (Reason.BAD_HEADER_CRC, Reason.BAD_PAYLOAD_CRC, Reason.BUSY) or (
+                ack.reason == Reason.BAD_LENGTH and ack.detail == 1
+            ):
                 continue
             return ack
         if last_ack is not None:
@@ -192,13 +194,16 @@ class SecbootUartClient:
 
     def flash_package(self, package: SecbootPackage, payload_size: int = UART_DEFAULT_PAYLOAD, retries: int = 10, progress=None) -> Ack:
         payload_size = min(payload_size, self.max_payload or UART_DEFAULT_PAYLOAD)
+        manifest_payload = package.manifest.pack()
+        if len(manifest_payload) > self.max_payload:
+            raise ValueError(f"manifest length {len(manifest_payload)} exceeds device max payload {self.max_payload}")
         if payload_size <= 0:
             raise ValueError("payload size must be positive")
         if payload_size % 4 != 0:
             raise ValueError("payload size must be 4-byte aligned")
         seq = 1
         manifest_ack = self.send_with_ack(
-            Frame(PacketType.MANIFEST, seq=seq, session_id=self.session_id, payload=package.manifest.pack()), retries
+            Frame(PacketType.MANIFEST, seq=seq, session_id=self.session_id, payload=manifest_payload), retries
         )
         if not manifest_ack.ok:
             raise RuntimeError(manifest_ack.describe())
