@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - runtime environment check
     list_ports = None
 
 from .constants import (
+    DETAIL_NAMES,
     PACKET_NAMES,
     REASON_NAMES,
     UART_ACK_SIZE,
@@ -84,7 +85,17 @@ class Ack:
     def describe(self) -> str:
         pkt = PACKET_NAMES.get(self.type, str(self.type))
         reason = REASON_NAMES.get(self.reason, str(self.reason))
-        return f"{pkt} seq={self.ack_seq} reason={reason} next=0x{self.next_offset:x} detail=0x{self.detail:x}"
+        detail = DETAIL_NAMES.get(self.detail)
+        detail_text = f"0x{self.detail:x}" if detail is None else f"{detail}(0x{self.detail:x})"
+        return f"{pkt} seq={self.ack_seq} reason={reason} next=0x{self.next_offset:x} detail={detail_text}"
+
+
+class FlashInterrupted(RuntimeError):
+    def __init__(self, stage: str, offset: int, seq: int) -> None:
+        super().__init__(f"flash interrupted after {stage} offset=0x{offset:x} seq={seq}")
+        self.stage = stage
+        self.offset = offset
+        self.seq = seq
 
 
 def require_pyserial() -> None:
@@ -214,7 +225,13 @@ class SecbootUartClient:
             return last_ack
         raise TimeoutError("no ACK from bootloader")
 
-    def flash_package(self, package: SecbootPackage, payload_size: int = UART_DEFAULT_PAYLOAD, retries: int = 10, progress=None) -> Ack:
+    def flash_package(self,
+                      package: SecbootPackage,
+                      payload_size: int = UART_DEFAULT_PAYLOAD,
+                      retries: int = 10,
+                      progress=None,
+                      interrupt_after_manifest: bool = False,
+                      interrupt_at_offset: int | None = None) -> Ack:
         payload_size = min(payload_size, self.max_payload or UART_DEFAULT_PAYLOAD)
         manifest_payload = package.manifest.pack()
         if len(manifest_payload) > self.max_payload:
@@ -230,6 +247,8 @@ class SecbootUartClient:
         if not manifest_ack.ok:
             raise RuntimeError(manifest_ack.describe())
         seq = (seq + 1) & 0xFFFF
+        if interrupt_after_manifest:
+            raise FlashInterrupted("manifest", 0, seq)
         offset = 0
         image = package.image
         if len(image) % 4 != 0:
@@ -245,10 +264,56 @@ class SecbootUartClient:
             seq = (seq + 1) & 0xFFFF
             if progress is not None:
                 progress(min(offset, len(image)), len(image))
+            if interrupt_at_offset is not None and offset >= interrupt_at_offset:
+                raise FlashInterrupted("data", offset, seq)
         end_ack = self.send_with_ack(Frame(PacketType.END, seq=seq, session_id=self.session_id, offset=offset), retries)
         if not end_ack.ok:
             raise RuntimeError(end_ack.describe())
         return end_ack
+
+    def probe_transport_fault(self,
+                              package: SecbootPackage,
+                              fault: str,
+                              payload_size: int = UART_DEFAULT_PAYLOAD,
+                              retries: int = 10) -> list[Ack]:
+        payload_size = min(payload_size, self.max_payload or UART_DEFAULT_PAYLOAD)
+        if payload_size <= 0:
+            raise ValueError("payload size must be positive")
+        if payload_size % 4 != 0:
+            raise ValueError("payload size must be 4-byte aligned")
+        if len(package.image) < payload_size:
+            raise ValueError("package image is smaller than one payload")
+
+        acks: list[Ack] = []
+        seq = 1
+        manifest_ack = self.send_with_ack(
+            Frame(PacketType.MANIFEST, seq=seq, session_id=self.session_id, payload=package.manifest.pack()), retries
+        )
+        acks.append(manifest_ack)
+        if not manifest_ack.ok:
+            return acks
+
+        seq = (seq + 1) & 0xFFFF
+        first = package.image[:payload_size]
+        data_ack = self.send_with_ack(
+            Frame(PacketType.DATA, seq=seq, session_id=self.session_id, offset=0, payload=first), retries
+        )
+        acks.append(data_ack)
+        if not data_ack.ok:
+            return acks
+
+        if fault == "duplicate-data":
+            fault_frame = Frame(PacketType.DATA, seq=seq, session_id=self.session_id, offset=0, payload=first)
+        elif fault == "bad-seq":
+            fault_frame = Frame(PacketType.DATA, seq=(seq + 2) & 0xFFFF, session_id=self.session_id, offset=payload_size, payload=package.image[payload_size:payload_size * 2])
+        elif fault == "bad-offset":
+            fault_frame = Frame(PacketType.DATA, seq=(seq + 1) & 0xFFFF, session_id=self.session_id, offset=payload_size + 4, payload=package.image[payload_size:payload_size * 2])
+        else:
+            raise ValueError(f"unsupported transport fault {fault}")
+
+        self.write_frame(fault_frame)
+        acks.append(self.read_ack())
+        return acks
 
     def abort(self) -> Ack:
         self.write_frame(Frame(PacketType.ABORT, session_id=self.session_id))

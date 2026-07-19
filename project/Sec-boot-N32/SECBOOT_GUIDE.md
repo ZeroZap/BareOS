@@ -27,9 +27,9 @@
 | App manifest 写入 | 有条件 | 仅 verify 成功后写入 |
 | App 跳转 | 已实现 | reset-time verify 后设置 MSP/VTOR 并跳转 |
 | Rollback counter 持久化 | 已实现 | `0x08006800` append-only CRC 记录 |
-| Boot state 持久化 | 部分实现 | `PENDING`、boot attempts 和 PLB App 实验室 `CONFIRMED` 已接入，pending 失败策略后续添加 |
+| Boot state 持久化 | 已接入 | `PENDING`、boot attempts、SecBoot 受控 `CONFIRMED`、pending 最大尝试次数 |
 
-注意：当前 PLB App 通过 `PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE=1` 直接写 `0x08006000` boot state page，只用于 bring-up 验证 confirmed 闭环。生产版本应改为 App 发起确认请求，由 SecBoot/private system 受控写入 boot state。
+注意：当前 PLB App 通过 SRAM mailbox `0x20003F00` 发起确认请求并软复位；SecBoot 在下一次启动时验证 App manifest 后写入 `CONFIRMED` boot state。该路径用于 bring-up 验证受控 confirmed 闭环，生产版本仍应结合 MPU/WRP/RDP 确认 App 不能直接擦写 boot state/rollback 区。
 
 重要：只有使用匹配开发 HMAC key 打包的镜像才能通过 `END` 并写入 App manifest。未带 HMAC 或 key 不匹配的包会返回 `IMAGE_VERIFY_FAILED`，避免把未认证镜像标记为可启动。
 
@@ -240,7 +240,359 @@ python tool/xy_secboot/xy_secboot.py flash \
 
 使用场景：板子已经有有效 App，复位后会自动跳 App，普通 `flash` 命令报 `timeout waiting for secboot frame`。如果 UART4 已经在打印 SecBoot heartbeat，说明当前已经停在 bootloader，不需要 `--recover-ms`。
 
+### Pending 尝试次数验证
+
+SecBoot 当前 `PENDING` App 最大尝试次数为 3。正常 PLB App 会在初始化成功后写入实验室 `CONFIRMED` 记录，因此后续复位不会继续增加 attempts。
+
+验证失败恢复策略时，可以构建一个不写 confirmed 的测试 App：
+
+```bash
+make NO_CONFIRM=y package
+```
+
+然后用更高的 `--security-counter` 重新打包并刷入。预期复位日志：
+
+```text
+SecBoot-N32 pending App boot attempt=1
+SecBoot-N32 jump App entry=8007800
+...
+SecBoot-N32 pending App boot attempt=2
+...
+SecBoot-N32 pending App boot attempt=3
+...
+SecBoot-N32 pending App attempts exceeded=3
+SecBoot-N32 main loop start
+```
+
+超过最大尝试次数后，SecBoot 不再跳 App，停留 bootloader recovery，等待重新刷写。
+
+### V1 故障注入验证
+
+V1 主链路跑通后，优先验证坏包、旧 counter 和中断恢复路径。可以用
+`fault-package` 从一个已知可刷写的 `.sbp` 派生故障包：
+
+```bash
+python tool/xy_secboot/xy_secboot.py fault-package \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_counter4.sbp" \
+  --output "project/PLB -N32/Makefile/build/PLB_bad_signature.sbp" \
+  --fault bad-signature
+```
+
+建议验证矩阵：
+
+| 用例 | 生成方式 | 预期 |
+|---|---|---|
+| 坏镜像数据 | `--fault bad-image` | `END` 返回 `IMAGE_VERIFY_FAILED` |
+| 坏 manifest hash | `--fault bad-hash --hmac-key tool/xy_secboot/dev_hmac_key.txt` | `END` 返回 `IMAGE_VERIFY_FAILED` |
+| 坏 HMAC/signature | `--fault bad-signature` | `END` 返回 `IMAGE_VERIFY_FAILED` |
+| 坏 manifest CRC | `--fault bad-manifest-crc` | `MANIFEST` 返回 `BAD_MANIFEST` |
+| 错 product id | `--fault bad-product --value 0x00010002 --hmac-key tool/xy_secboot/dev_hmac_key.txt` | `MANIFEST` 返回 `BAD_MANIFEST` |
+| 错 entry addr | `--fault bad-entry --value 0x08000000 --hmac-key tool/xy_secboot/dev_hmac_key.txt` | `MANIFEST` 返回 `BAD_MANIFEST` |
+| 旧 rollback counter | `--fault old-counter --value 3 --hmac-key tool/xy_secboot/dev_hmac_key.txt` | 已持久化 counter 高于 3 时，`END` 返回 `ROLLBACK_REJECTED` |
+| 坏 package CRC | `--fault bad-package-crc` | host `inspect` 阶段直接拒绝 |
+
+Host 工具会把 SecBoot verify 失败的内部 detail 值翻译成诊断名：
+
+| detail | 诊断名 |
+|---:|---|
+| `0xfffffffe` | `IMAGE_HASH_OR_RANGE_FAILED` |
+| `0xfffffffd` | `MANIFEST_MAC_FAILED` |
+| `0xfffffffc` | `ROLLBACK_FAILED` |
+| `0xfffffffb` | `UNSUPPORTED_CRYPTO` |
+| `0xfffffffa` | `CRYPTO_HW_FAILED` |
+| `0xfffffff9` | `VERIFY_STATE_FAILED` |
+
+刷写故障包后，UART4 应保留在 SecBoot main loop，不能跳转损坏 App。每个失败
+用例后都应再刷一个更高 `security_counter` 的正常 confirmed 包，确认设备可恢复。
+
+2026-07-15 V1 验证记录：
+
+| 项目 | 结果 |
+|---|---|
+| 测试串口 | UART5 `COM24` |
+| 正常恢复包 | `PLB_confirm_counter4.sbp` |
+| 正常包刷写 | `END ACK`，`detail=0x8007800` |
+| App 启动 | 通过 |
+| 坏 manifest CRC | `NACK seq=1 reason=BAD_MANIFEST` |
+| 坏 HMAC/signature | `ERROR reason=IMAGE_VERIFY_FAILED detail=0xfffffffd` |
+| 坏 image data | `ERROR reason=IMAGE_VERIFY_FAILED detail=0xfffffffe` |
+| 旧 rollback counter | `NACK seq=1 reason=ROLLBACK_REJECTED detail=0x3` |
+| 错 product id | `NACK seq=1 reason=BAD_MANIFEST` |
+| 错 entry addr | `NACK seq=1 reason=BAD_MANIFEST` |
+| 坏 package CRC | host `inspect` 返回 `package crc32 mismatch` |
+| 故障测试后恢复 | 正常包重新刷写并启动 App，通过 |
+
+本轮发现并修复：早期 `manifest_basic_check()` 未检查 `manifest.header_crc32`，导致
+`bad-manifest-crc` 被接受。现已在 MANIFEST 阶段加入 header CRC32 校验。
+
+### 受控 Confirmed 验证
+
+PLB App 不再直接写 SecBoot state Flash。确认流程：
+
+1. App 启动后读取当前 App manifest 和 boot state。
+2. 若还不是 matching `CONFIRMED`，App 在 SRAM mailbox `0x20003F00` 写入确认请求。
+3. App 触发 `NVIC_SystemReset()`。
+4. SecBoot 启动后验证 App manifest、image hash、HMAC 和 rollback。
+5. SecBoot 检查 mailbox 与当前 manifest 是否匹配。
+6. 匹配时由 SecBoot 写 `CONFIRMED` boot state，并清除 mailbox。
+7. SecBoot 跳转 App；App 再次启动后读到已 confirmed，不再复位。
+
+当前验证包：
+
+```text
+project/PLB -N32/Makefile/build/PLB_confirm_mailbox_counter5.sbp
+```
+
+刷写命令：
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_mailbox_counter5.sbp" \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000 \
+  --reset
+```
+
+预期 UART4 日志：
+
+```text
+PLB-N32 secboot confirm=0
+SecBoot-N32 reset flags: ... SFTRST=1 ...
+SecBoot-N32 App confirmed by mailbox counter=5
+SecBoot-N32 jump App entry=8007800
+PLB-N32 secboot confirm=0
+PLB-N32 main loop start
+```
+
+第二次 PLB App 启动时 `secboot confirm=0` 表示已经是 matching `CONFIRMED`，App 不再发 mailbox reset。
+
+2026-07-15 受控 confirmed 验证记录：
+
+| 项目 | 结果 |
+|---|---|
+| 验证包 | `PLB_confirm_mailbox_counter5.sbp` |
+| 首次启动 | SecBoot 记录 `pending App boot attempt=1` 后跳 App |
+| App 确认请求 | App 写 mailbox 后触发软件复位，SecBoot 日志 `SFTRST=1` |
+| SecBoot 写 confirmed | `SecBoot-N32 App confirmed by mailbox counter=5` |
+| 再次 App 启动 | `PLB-N32 secboot confirm=0`，进入 main loop |
+| 手动再次复位 | 未再出现 pending attempt 和 mailbox confirm，直接 `jump App entry=8007800` |
+| 稳定性 | App heartbeat 正常 |
+
+再次复位日志关键片段：
+
+```text
+SecBoot-N32 jump App entry=8007800
+PLB-N32 secboot confirm=0
+PLB-N32 main loop start
+PLB-N32 UART4 heartbeat UART5 rx=0 tx=0 rb=0 drop=0 last=0
+```
+
+### V1 中断恢复验证
+
+故障包验证后，继续验证升级过程中断不会提交坏状态。host 工具提供两个主动中断
+选项，不发送 `END`：
+
+| 用例 | 命令选项 | 预期 |
+|---|---|---|
+| MANIFEST 后中断 | `--interrupt-after-manifest` | 当前实现已擦除 App 区但未提交新 manifest；复位后应进入 bootloader recovery |
+| DATA 中途断开 | `--interrupt-at-offset 0x4000` | 不写 App manifest，不更新 rollback；复位后应进入 bootloader recovery，后续可重新刷正常包恢复 |
+
+COM24 示例：
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_counter4.sbp" \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --interrupt-after-manifest
+```
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_counter4.sbp" \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --interrupt-at-offset 0x4000
+```
+
+每个中断用例后执行一次正常恢复刷写：
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_counter4.sbp" \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --reset
+```
+
+若正常包能 `END ACK` 并成功启动 App，说明升级中断后仍可恢复。
+
+### UART DATA 层故障探测
+
+`probe-transport` 只验证 transport 行为，不发送 `END`，因此不会提交新 manifest。
+该命令会发送 MANIFEST 并写入至少一个 DATA 包，所以每次探测后都要重新刷正常包
+恢复 App 区。
+
+| 用例 | 命令选项 | 预期 |
+|---|---|---|
+| 重复 DATA | `--fault duplicate-data` | 重复帧返回 ACK |
+| 错 seq | `--fault bad-seq` | 返回 `BAD_SEQ`，detail 为期望 seq |
+| 错 offset | `--fault bad-offset` | 返回 `BAD_OFFSET`，detail 为错误 offset |
+
+COM24 示例：
+
+```bash
+python tool/xy_secboot/xy_secboot.py probe-transport \
+  --port COM24 \
+  --baud 115200 \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_mailbox_counter6.sbp" \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000 \
+  --fault bad-seq
+```
+
+探测后恢复：
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package "project/PLB -N32/Makefile/build/PLB_confirm_mailbox_counter6.sbp" \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000 \
+  --reset
+```
+
+2026-07-15 UART DATA 层故障探测记录：
+
+| 项目 | 结果 |
+|---|---|
+| `duplicate-data` | 符合预期 |
+| `bad-seq` | 符合预期 |
+| `bad-offset` | 符合预期 |
+| 探测后恢复 | 正常包重新刷写并启动 App，通过 |
+
+### State/Rollback 诊断输出
+
+为支持后续 state/rollback 页满和损坏恢复测试，SecBoot 的 `p` 命令在打印分区
+布局外，额外打印当前 rollback counter 和 boot state 摘要：
+
+```text
+SecBoot-N32 diag rollback=6
+SecBoot-N32 diag state=2 seq=... cnt=6 ver=1 attempts=...
+```
+
+字段含义：
+
+| 字段 | 含义 |
+|---|---|
+| `rollback` | 当前持久化 anti-rollback counter |
+| `state` | `1=PENDING`，`2=CONFIRMED` |
+| `seq` | boot state append-only 记录序号 |
+| `cnt` | boot state 对应 security counter |
+| `ver` | boot state 对应 image version |
+| `attempts` | pending boot attempts |
+
+注意：`seq` 是逻辑序号，不是页内槽位号。state page 写满后擦除重写时，当前实现
+会先读取旧页最大 `seq`，再写入 `seq + 1`，因此页满 rollover 后 `seq` 会继续递增，
+不会回到 1。
+
+SecBoot bootloader 已改为 `-Os` 构建，避免 V1 分区空间不足，同时保留调试符号。
+
+2026-07-15 state page rollover 验证记录：
+
+| 项目 | 结果 |
+|---|---|
+| rollover 前 | `rollback=7 state=2 seq=64 cnt=7 ver=1 attempts=1` |
+| rollover 后 | `rollback=8 state=2 seq=67 cnt=8 ver=1 attempts=1` |
+| 结论 | state page 满后擦除重写成功，逻辑 `seq` 继续递增，confirmed 状态保持有效 |
+
+2026-07-15 rollback 递增连续性验证记录：
+
+| 项目 | 结果 |
+|---|---|
+| counter9 正常包 | `PLB_confirm_mailbox_counter9.sbp` |
+| counter9 后诊断 | `rollback=9 state=2 seq=73 cnt=9 ver=1 attempts=1` |
+| 旧 counter8 包 | `PLB_confirm_mailbox_counter8.sbp` |
+| 旧包拒绝 | `NACK seq=1 reason=ROLLBACK_REJECTED detail=0x8` |
+| 结论 | rollback 从 8 到 9 递增正常，旧 counter 被 MANIFEST 阶段拒绝 |
+
+### Flash 保护状态
+
+WRP/RDP/option bytes 保护暂不在当前单板 V1 bring-up 中实测，避免把唯一开发板锁死
+或进入不可恢复状态。当前仅记录为后续生产化/多板阶段任务：
+
+| 区域 | 地址 | 后续策略 |
+|---|---:|---|
+| Bootloader | `0x08000000-0x08005FFF` | WRP，只允许量产/调试流程更新 |
+| Boot state | `0x08006000` | App 不应可擦写，SecBoot/private system 控制 |
+| Rollback | `0x08006800` | App 不应可擦写，生产优先 OTP/eFuse 或受保护 Flash |
+| App manifest | `0x08007000` | SecBoot 写入，App 只读 |
+
+当前开发板阶段不执行 WRP/RDP 测试；所有相关验证只停留在代码与文档策略层面。
+
+2026-07-15 中断恢复验证记录：
+
+| 项目 | 结果 |
+|---|---|
+| MANIFEST 后中断 | host 输出 `flash interrupted after manifest offset=0x0 seq=2` |
+| MANIFEST 后恢复 | 正常包重新刷写后恢复 |
+| DATA 中途停止 | 执行中途停止后重新刷正常包恢复 |
+| 恢复后 App 状态 | UART4 输出 `PLB-N32 main loop start` 和周期 heartbeat |
+
+恢复后日志示例：
+
+```text
+[I] PLB-N32 main loop start
+[I] PLB-N32 UART4 heartbeat UART5 rx=0 tx=0 rb=0 drop=0 last=0
+```
+
 ## PLB-N32 作为 App 的自动化流程
+
+### V1 验证矩阵
+
+| 类别 | 用例 | 状态 | 证据 |
+|---|---|---|---|
+| 正常链路 | SecBoot `HELLO/CAPS` | 通过 | host 输出 `CAPS payload=...` |
+| 正常链路 | 正常包刷写 | 通过 | `END ACK ... detail=0x8007800` |
+| 正常链路 | App 启动 | 通过 | `PLB-N32 main loop start` |
+| 启动认证 | 每次复位验证后跳 App | 通过 | `SecBoot-N32 jump App entry=8007800` |
+| Manifest | 坏 manifest CRC | 通过 | `BAD_MANIFEST` |
+| Manifest | 错 product id | 通过 | `BAD_MANIFEST` |
+| Manifest | 错 entry addr | 通过 | `BAD_MANIFEST` |
+| Image/Auth | 坏 image data | 通过 | `IMAGE_HASH_OR_RANGE_FAILED` |
+| Image/Auth | 坏 HMAC/signature | 通过 | `MANIFEST_MAC_FAILED` |
+| Rollback | 旧 counter 拒绝 | 通过 | `ROLLBACK_REJECTED` |
+| Rollback | counter 8 -> 9 递增 | 通过 | `rollback=9` |
+| State | pending/no-confirm 最大尝试 | 通过 | `pending App attempts exceeded=3` |
+| State | state page rollover | 通过 | `seq=64` 后 counter8 confirmed 有效 |
+| Confirm | mailbox 受控 confirmed | 通过 | `App confirmed by mailbox counter=5` |
+| Recovery | MANIFEST 后中断恢复 | 通过 | 中断后可重新刷正常包 |
+| Recovery | DATA 中途断开恢复 | 通过 | 中断后可重新刷正常包 |
+| UART DATA | duplicate DATA | 通过 | duplicate DATA 返回 ACK |
+| UART DATA | bad seq | 通过 | 返回 `BAD_SEQ` |
+| UART DATA | bad offset | 通过 | 返回 `BAD_OFFSET` |
+| Host | bad package CRC | 通过 | `package crc32 mismatch` |
+| Tooling | detail 解码 | 通过 | `MANIFEST_MAC_FAILED(...)` |
+| Tooling | 版本日志 | 待验证 | `SecBoot-N32 V1.1-dev` / `PLB-N32 App V1.1-dev` |
+| Production | WRP/RDP | 跳过 | 单板阶段不做，避免锁板 |
 
 `project/PLB -N32` 已按 SecBoot App slot 链接：
 
@@ -343,7 +695,7 @@ detail        4 bytes
 | 1 | 固定 UART5 transport，保证 HELLO/CAPS、MANIFEST、DATA 可重复跑通 |
 | 2 | 补 HMAC-SHA256 或 ECDSA-P256 验证后端 |
 | 3 | 实现 App manifest boot 检查和 App jump |
-| 4 | 增加 pending 最大尝试次数和失败恢复策略 |
+| 4 | 将 App confirmed 从实验室直写替换为 private system 受控确认 |
 | 5 | 加入 host fault injection 和自动化回归 |
 | 6 | 替换为生产密钥/生产算法策略 |
 

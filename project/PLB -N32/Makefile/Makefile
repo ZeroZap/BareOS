@@ -19,6 +19,7 @@ OPT = -O0
 # Build path
 #######################################
 BUILD_DIR = build
+SECBOOT_HMAC_KEY ?= ../../../tool/xy_secboot/dev_hmac_key.txt
 
 #######################################
 # HAL path
@@ -41,6 +42,11 @@ DEFS += -DAT_LIST_WORK_COUNT=8
 DEFS += -DAT_WORK_STATIC_POOL_EN=1
 DEFS += -DAT_WORK_POOL_COUNT=8
 DEFS += -DAT_WORK_ITEM_DATA_SIZE=256
+DEFS += -DPLB_N32_APP_IMAGE=1
+DEFS += -DVECT_TAB_OFFSET=0x7800
+ifeq ($(NO_CONFIRM), y)
+DEFS += -DPLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE=0
+endif
 ## NTFx CODE END Define ##
 ######################################
 # Algo libs
@@ -167,6 +173,12 @@ LDSCRIPT =PLB.ld
 # Objects
 ######################################
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
+
+package: all
+	python ../../../tool/xy_secboot/xy_secboot.py pack --input $(BUILD_DIR)/$(TARGET).bin --output $(BUILD_DIR)/$(TARGET).sbp --product-id 0x00010001 --image-addr 0x08007800 --entry-addr 0x08007800 --image-version 1 --security-counter 1 --hmac-key $(SECBOOT_HMAC_KEY)
+
+inspect-package: package
+	python ../../../tool/xy_secboot/xy_secboot.py inspect $(BUILD_DIR)/$(TARGET).sbp
 
 # list of objects
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))

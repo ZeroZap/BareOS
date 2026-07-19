@@ -1,5 +1,6 @@
 #include "plb_n32_flash_fee.h"
 
+#include "n32l40x.h"
 #include "n32l40x_flash.h"
 #include "xy_string.h"
 
@@ -17,6 +18,9 @@ typedef struct {
 #define PLB_N32_SECBOOT_STATE_MAGIC    0x42535431u
 #define PLB_N32_SECBOOT_STATE_PENDING  1u
 #define PLB_N32_SECBOOT_STATE_CONFIRMED 2u
+#define PLB_N32_SECBOOT_CONFIRM_MAILBOX_ADDR 0x20003F00u
+#define PLB_N32_SECBOOT_CONFIRM_MAGIC  0x434E4631u /* 'CNF1' */
+#define PLB_N32_SECBOOT_CONFIRM_REQUEST 1u
 
 typedef struct {
     uint32_t magic;
@@ -43,19 +47,22 @@ typedef struct {
     uint32_t crc32;
 } plb_n32_secboot_state_record_t;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t magic_inv;
+    uint32_t product_id;
+    uint32_t security_counter;
+    uint32_t image_version;
+    uint32_t request;
+    uint32_t crc32;
+} plb_n32_secboot_confirm_mailbox_t;
+
 static eflash_t s_plb_n32_fee;
 static bool s_plb_n32_fee_page_erased[PLB_N32_FEE_PAGE_COUNT];
 static xy_eeprom_t s_plb_n32_eeprom;
 static uint32_t s_plb_n32_eeprom_shadow[PLB_N32_EEPROM_ITEM_COUNT];
 static uint8_t s_plb_n32_eeprom_valid[XY_EEPROM_BITMAP_SIZE(PLB_N32_EEPROM_ITEM_COUNT)];
 static uint32_t s_plb_n32_boot_count;
-
-static plb_n32_flash_ctx_t s_plb_n32_secboot_state_ctx = {
-    PLB_N32_SECBOOT_STATE_BASE_ADDR,
-    PLB_N32_FLASH_PAGE_SIZE,
-    PLB_N32_FLASH_PAGE_SIZE,
-    1u,
-};
 
 static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len)
 {
@@ -343,9 +350,9 @@ eflash_result_t plb_n32_secboot_confirm_app(void)
 #if PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE
     plb_n32_secboot_manifest_head_t manifest;
     plb_n32_secboot_state_record_t current;
-    plb_n32_secboot_state_record_t record;
-    uint32_t seq = 1u;
-    uint32_t offset;
+    plb_n32_secboot_confirm_mailbox_t mailbox;
+    volatile plb_n32_secboot_confirm_mailbox_t *shared =
+        (volatile plb_n32_secboot_confirm_mailbox_t *)PLB_N32_SECBOOT_CONFIRM_MAILBOX_ADDR;
 
     memset(&current, 0, sizeof(current));
     memcpy(&manifest, (const void *)PLB_N32_SECBOOT_MANIFEST_BASE_ADDR,
@@ -359,39 +366,21 @@ eflash_result_t plb_n32_secboot_confirm_app(void)
             current.security_counter == manifest.security_counter) {
             return EFLASH_OK;
         }
-        seq = current.seq + 1u;
     }
 
-    for (offset = 0u;
-         offset + sizeof(plb_n32_secboot_state_record_t) <= PLB_N32_FLASH_PAGE_SIZE;
-         offset += sizeof(plb_n32_secboot_state_record_t)) {
-        uint32_t magic = *(const uint32_t *)(PLB_N32_SECBOOT_STATE_BASE_ADDR + offset);
-        if (magic == 0xFFFFFFFFu) {
-            break;
-        }
-    }
+    mailbox.magic = PLB_N32_SECBOOT_CONFIRM_MAGIC;
+    mailbox.magic_inv = ~PLB_N32_SECBOOT_CONFIRM_MAGIC;
+    mailbox.product_id = 0x00010001u;
+    mailbox.security_counter = manifest.security_counter;
+    mailbox.image_version = manifest.image_version;
+    mailbox.request = PLB_N32_SECBOOT_CONFIRM_REQUEST;
+    mailbox.crc32 = crc32_update(0u, (const uint8_t *)&mailbox,
+                                 sizeof(mailbox) - sizeof(mailbox.crc32));
 
-    if (offset + sizeof(plb_n32_secboot_state_record_t) > PLB_N32_FLASH_PAGE_SIZE) {
-        if (flash_erase_page_fee(&s_plb_n32_secboot_state_ctx, 0u) != EFLASH_OK) {
-            return EFLASH_ERROR_ERASE_FAIL;
-        }
-        offset = 0u;
-    }
-
-    record.magic = PLB_N32_SECBOOT_STATE_MAGIC;
-    record.seq = seq;
-    record.state = PLB_N32_SECBOOT_STATE_CONFIRMED;
-    record.state_inv = ~record.state;
-    record.security_counter = manifest.security_counter;
-    record.image_version = manifest.image_version;
-    record.boot_attempts = current.boot_attempts;
-    record.crc32 = crc32_update(0u, (const uint8_t *)&record,
-                                sizeof(record) - sizeof(record.crc32));
-
-    return flash_write_fee(&s_plb_n32_secboot_state_ctx,
-                           offset,
-                           (const uint8_t *)&record,
-                           sizeof(record));
+    *shared = mailbox;
+    __DSB();
+    NVIC_SystemReset();
+    return EFLASH_OK;
 #else
     return EFLASH_ERROR_INVALID_PARAM;
 #endif

@@ -3,7 +3,7 @@ ENTRY(Reset_Handler)
 
 /* NTFx CODE START */
 /* Highest address of the user mode stack */
-_estack = 0x20004000;    /* end of IRAM1 */
+_estack = 0x20003F00;    /* leave top 256 bytes for SecBoot reset mailbox */
 /* Generate a link error if heap and stack don't fit into RAM */
 _Min_Heap_Size = 0x200;      /* required amount of heap  */
 _Min_Stack_Size = 0x200;     /* required amount of stack */

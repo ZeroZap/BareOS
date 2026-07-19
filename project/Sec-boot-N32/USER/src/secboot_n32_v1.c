@@ -8,6 +8,8 @@
 #include "xy_sha256.h"
 #include "xy_string.h"
 
+#include <stddef.h>
+
 typedef struct {
     uint8_t version;
     uint8_t type;
@@ -36,10 +38,24 @@ typedef struct {
     uint32_t crc32;
 } secboot_state_record_t;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t magic_inv;
+    uint32_t product_id;
+    uint32_t security_counter;
+    uint32_t image_version;
+    uint32_t request;
+    uint32_t crc32;
+} secboot_confirm_mailbox_t;
+
 #define SECBOOT_N32_ROLLBACK_MAGIC      0x52424B31u /* 'RBK1' */
 #define SECBOOT_N32_STATE_MAGIC         0x42535431u /* 'BST1' */
 #define SECBOOT_N32_STATE_PENDING       1u
 #define SECBOOT_N32_STATE_CONFIRMED     2u
+#define SECBOOT_N32_MAX_BOOT_ATTEMPTS   3u
+#define SECBOOT_N32_CONFIRM_MAILBOX_ADDR 0x20003F00u
+#define SECBOOT_N32_CONFIRM_MAGIC       0x434E4631u /* 'CNF1' */
+#define SECBOOT_N32_CONFIRM_REQUEST     1u
 
 static const xy_secboot_partition_t s_secboot_n32_parts[] = {
     { XY_SECBOOT_PART_BOOTLOADER,
@@ -566,6 +582,47 @@ static int secboot_state_write(uint32_t state,
     return secboot_flash_write(addr, (const uint8_t *)&record, sizeof(record));
 }
 
+static void secboot_confirm_mailbox_clear(void)
+{
+    volatile secboot_confirm_mailbox_t *mailbox =
+        (volatile secboot_confirm_mailbox_t *)SECBOOT_N32_CONFIRM_MAILBOX_ADDR;
+
+    mailbox->magic = 0u;
+    mailbox->magic_inv = 0u;
+    mailbox->product_id = 0u;
+    mailbox->security_counter = 0u;
+    mailbox->image_version = 0u;
+    mailbox->request = 0u;
+    mailbox->crc32 = 0u;
+}
+
+static int secboot_confirm_mailbox_matches(const xy_secboot_manifest_t *manifest)
+{
+    secboot_confirm_mailbox_t mailbox;
+    uint32_t crc;
+
+    if (manifest == NULL) {
+        return 0;
+    }
+
+    memcpy(&mailbox,
+           (const void *)SECBOOT_N32_CONFIRM_MAILBOX_ADDR,
+           sizeof(mailbox));
+    if (mailbox.magic != SECBOOT_N32_CONFIRM_MAGIC ||
+        mailbox.magic_inv != ~SECBOOT_N32_CONFIRM_MAGIC ||
+        mailbox.product_id != SECBOOT_N32_PRODUCT_ID ||
+        mailbox.security_counter != manifest->security_counter ||
+        mailbox.image_version != manifest->image_version ||
+        mailbox.request != SECBOOT_N32_CONFIRM_REQUEST) {
+        return 0;
+    }
+
+    crc = crc32_update(0u,
+                       (const uint8_t *)&mailbox,
+                       sizeof(mailbox) - sizeof(mailbox.crc32));
+    return (crc == mailbox.crc32) ? 1 : 0;
+}
+
 static const xy_secboot_crypto_ops_t s_secboot_crypto_ops = {
     NULL,
     secboot_hash_init,
@@ -595,11 +652,23 @@ static const xy_secboot_single_port_t s_secboot_port = {
 
 static int manifest_basic_check(const xy_secboot_manifest_t *manifest)
 {
+    uint32_t header_crc;
+
+    if (manifest == NULL) {
+        return -1;
+    }
+
     if (manifest->magic != XY_SECBOOT_MANIFEST_MAGIC ||
         manifest->header_version != XY_SECBOOT_MANIFEST_VERSION ||
         manifest->header_len < sizeof(xy_secboot_manifest_t) ||
         manifest->product_id != SECBOOT_N32_PRODUCT_ID ||
         manifest->image_type != (uint32_t)XY_SECBOOT_IMAGE_APP) {
+        return -1;
+    }
+    header_crc = crc32_update(0u,
+                              (const uint8_t *)manifest,
+                              offsetof(xy_secboot_manifest_t, header_crc32));
+    if (header_crc != manifest->header_crc32) {
         return -1;
     }
     if (manifest->image_addr != SECBOOT_N32_APP_IMAGE_ADDR ||
@@ -990,9 +1059,32 @@ int secboot_n32_v1_try_boot_app(uint32_t recovery_wait_ms)
         return -1;
     }
 
+    if (secboot_confirm_mailbox_matches(&manifest)) {
+        uint32_t boot_attempts = 0u;
+
+        if (secboot_state_read(&state) == 0 &&
+            state.security_counter == manifest.security_counter) {
+            boot_attempts = state.boot_attempts;
+        }
+        if (secboot_state_write(SECBOOT_N32_STATE_CONFIRMED,
+                                &manifest,
+                                boot_attempts) == 0) {
+            secboot_confirm_mailbox_clear();
+            xy_log_i("SecBoot-N32 App confirmed by mailbox counter=%u",
+                     (unsigned int)manifest.security_counter);
+        } else {
+            xy_log_w("SecBoot-N32 App confirm mailbox write failed");
+        }
+    }
+
     if (secboot_state_read(&state) == 0 &&
         state.state == SECBOOT_N32_STATE_PENDING &&
         state.security_counter == manifest.security_counter) {
+        if (state.boot_attempts >= SECBOOT_N32_MAX_BOOT_ATTEMPTS) {
+            xy_log_w("SecBoot-N32 pending App attempts exceeded=%u",
+                     (unsigned int)state.boot_attempts);
+            return 0;
+        }
         (void)secboot_state_write(SECBOOT_N32_STATE_PENDING,
                                   &manifest,
                                   state.boot_attempts + 1u);
@@ -1023,6 +1115,9 @@ void secboot_n32_v1_send_banner(void)
 
 void secboot_n32_v1_print_layout(void)
 {
+    secboot_state_record_t state;
+    uint32_t rollback_counter;
+
     xy_log_i("SecBoot-N32 boot=%x+%x state=%x rollback=%x manifest=%x app=%x+%x",
              (unsigned int)SECBOOT_N32_BOOT_BASE_ADDR,
              (unsigned int)SECBOOT_N32_BOOT_TOTAL_SIZE,
@@ -1031,6 +1126,21 @@ void secboot_n32_v1_print_layout(void)
              (unsigned int)SECBOOT_N32_APP_MANIFEST_ADDR,
              (unsigned int)SECBOOT_N32_APP_IMAGE_ADDR,
              (unsigned int)SECBOOT_N32_APP_IMAGE_SIZE);
+    if (secboot_rollback_read(&rollback_counter) == 0) {
+        xy_log_i("SecBoot-N32 diag rollback=%u", (unsigned int)rollback_counter);
+    } else {
+        xy_log_w("SecBoot-N32 diag rollback=invalid");
+    }
+    if (secboot_state_read(&state) == 0) {
+        xy_log_i("SecBoot-N32 diag state=%u seq=%u cnt=%u ver=%u attempts=%u",
+                 (unsigned int)state.state,
+                 (unsigned int)state.seq,
+                 (unsigned int)state.security_counter,
+                 (unsigned int)state.image_version,
+                 (unsigned int)state.boot_attempts);
+    } else {
+        xy_log_w("SecBoot-N32 diag state=none");
+    }
 }
 
 void secboot_n32_v1_poll(void)

@@ -49,14 +49,23 @@ static const xy_secboot_suite_t s_suite_modern = {
 static const xy_secboot_suite_t s_suite_market = {
     XY_SECBOOT_SUITE_MARKET,
     XY_SECBOOT_ALG_HASH_SHA256,
+#if defined(XY_SECBOOT_DEV_HMAC_SHA256) && (XY_SECBOOT_DEV_HMAC_SHA256 != 0)
+    XY_SECBOOT_ALG_NONE,
+    XY_SECBOOT_ALG_MAC_HMAC_SHA256,
+#else
     XY_SECBOOT_ALG_SIG_ECDSA_P256,
     XY_SECBOOT_ALG_NONE,
+#endif
     XY_SECBOOT_ALG_CIPHER_AES_CTR,
     XY_SECBOOT_ALG_MAC_HMAC_SHA256,
     XY_SECBOOT_ALG_AEAD_AES_GCM,
     XY_SECBOOT_ALG_MAC_HMAC_SHA256,
     32u,
+#if defined(XY_SECBOOT_DEV_HMAC_SHA256) && (XY_SECBOOT_DEV_HMAC_SHA256 != 0)
+    0u,
+#else
     64u,
+#endif
     32u,
     12u,
     1u,

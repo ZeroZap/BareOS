@@ -45,6 +45,32 @@ Inspect a package:
 python tool/xy_secboot/xy_secboot.py inspect build/app.sbp
 ```
 
+Build a mutated package for V1 fault-injection tests:
+
+```bash
+python tool/xy_secboot/xy_secboot.py fault-package \
+  --package build/app.sbp \
+  --output build/app_bad_signature.sbp \
+  --fault bad-signature
+```
+
+Supported package faults:
+
+| Fault | Expected target path |
+|---|---|
+| `bad-image` | `END` rejects with `IMAGE_VERIFY_FAILED` |
+| `bad-hash` | `END` rejects with `IMAGE_VERIFY_FAILED` |
+| `bad-signature` | `END` rejects with `IMAGE_VERIFY_FAILED` |
+| `bad-manifest-crc` | `MANIFEST` rejects with `BAD_MANIFEST` |
+| `bad-product` | `MANIFEST` rejects with `BAD_MANIFEST` |
+| `bad-entry` | `MANIFEST` rejects with `BAD_MANIFEST` |
+| `old-counter` | `END` rejects with `ROLLBACK_REJECTED` when below stored counter |
+| `bad-package-crc` | Host `inspect` rejects the package before flashing |
+
+Field-mutation faults that should preserve the HMAC, such as `bad-product`,
+`bad-entry`, and `old-counter`, need `--hmac-key` when you want the bootloader
+to reach the intended policy check instead of failing the manifest MAC first.
+
 Flash over UART5 transport v1:
 
 ```bash
@@ -71,6 +97,58 @@ python tool/xy_secboot/xy_secboot.py flash \
 ```
 
 `END ACK` means the image was written, verified, and the App manifest was committed. SecBoot-N32 V1 does not immediately jump to the App after `END ACK`; on the next reset it opens a 1500 ms UART5 recovery window, then verifies the committed manifest and jumps to the App entry if no host input is present. Without `--reset`, continuing bootloader heartbeat logs after `END ACK` are expected until the next reset.
+
+Interrupt a flash flow before `END` for recovery testing:
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --interrupt-after-manifest
+```
+
+```bash
+python tool/xy_secboot/xy_secboot.py flash \
+  --port COM24 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --interrupt-at-offset 0x4000
+```
+
+These options stop the host without sending `END`. The bootloader must not commit the
+new manifest or jump the partially written image. A later normal flash should recover.
+
+Probe UART DATA fault handling without sending `END`:
+
+```bash
+python tool/xy_secboot/xy_secboot.py probe-transport \
+  --port COM24 \
+  --baud 115200 \
+  --package build/app.sbp \
+  --payload 256 \
+  --timeout-ms 1000 \
+  --retries 10 \
+  --recover-ms 5000 \
+  --fault bad-seq
+```
+
+Supported transport probes:
+
+| Fault | Expected result |
+|---|---|
+| `duplicate-data` | duplicate DATA returns ACK for the duplicate frame |
+| `bad-seq` | DATA with skipped seq returns `BAD_SEQ` |
+| `bad-offset` | DATA with wrong offset returns `BAD_OFFSET` |
+
+Transport probes send MANIFEST and at least one DATA frame, so the App area may be
+erased or partially written. Always flash a normal package after a probe.
 
 If a valid App is already installed and the board jumps too quickly for manual flashing, use `--recover-ms` and reset the board while the host is sending recovery bytes:
 
@@ -130,7 +208,18 @@ The MCU Flash write path requires DATA lengths to be 4-byte aligned. The packer 
 
 The UART flasher validates that each ACK/NACK carries the sequence number of the frame currently in flight. Stale ACKs from delayed serial delivery are ignored and retried instead of advancing the DATA offset.
 
-The PLB-N32 demo App writes a lab-only SecBoot `CONFIRMED` boot-state record after basic initialization succeeds. This is guarded by `PLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE` and stops subsequent reset-time boots from incrementing the pending boot-attempt counter. Production firmware should replace this direct Flash write with a controlled SecBoot/private-system confirmation path.
+The flasher also decodes SecBoot internal verify detail values returned in ERROR
+ACK payloads. For example, `detail=0xfffffffd` is printed as
+`MANIFEST_MAC_FAILED(0xfffffffd)`, and `detail=0xfffffffe` is printed as
+`IMAGE_HASH_OR_RANGE_FAILED(0xfffffffe)`.
+
+The PLB-N32 demo App now requests `CONFIRMED` through a reset-retained SRAM mailbox at `0x20003F00`. The App writes the request and resets; SecBoot verifies the installed manifest and then writes the boot-state record itself. This is still a bring-up path, but the App no longer writes the SecBoot state Flash directly.
+
+For pending-attempt recovery testing, build PLB with `NO_CONFIRM=y` so the App starts but does not write `CONFIRMED`:
+
+```bash
+make NO_CONFIRM=y package
+```
 
 `tool/xy_secboot/dev_hmac_key.txt` is the lab-only key wired into the SecBoot-N32 development build. Override it with `--hmac-key` for CLI packaging or `SECBOOT_HMAC_KEY=...` for the PLB Makefile target.
 

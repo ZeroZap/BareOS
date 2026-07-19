@@ -40,6 +40,7 @@ int main(void)
     USART_Configuration();
     xy_log_init();
     xy_log_i("SecBoot-N32 UART4 log ready");
+    xy_log_i("%s", SECBOOT_N32_VERSION_STR);
     n32_uart5_secboot_init();
     xy_log_i("SecBoot-N32 UART5 secboot V1 transport ready");
     secboot_log_reset_flags();

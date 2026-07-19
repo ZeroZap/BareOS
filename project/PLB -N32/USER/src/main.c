@@ -46,6 +46,7 @@ int main(void)
     USART_Configuration();
     xy_log_init();
     xy_log_i("PLB-N32 UART4 log ready");
+    xy_log_i("%s", PLB_N32_VERSION_STR);
     n32_uart5_secboot_init();
     xy_log_i("PLB-N32 UART5 reserved for sec-boot development");
     plb_log_reset_flags();
@@ -66,11 +67,11 @@ int main(void)
     xy_log_i("PLB-N32 secboot confirm=%d",
              (int)plb_n32_secboot_confirm_app());
     if (plb_n32_server_endpoint_load(&server) == EFLASH_OK) {
-        xy_log_i("PLB-N32 server ip=%x port=%u",
-                 ((unsigned int)server.ip[0] << 24)
-                 | ((unsigned int)server.ip[1] << 16)
-                 | ((unsigned int)server.ip[2] << 8)
-                 | (unsigned int)server.ip[3],
+        xy_log_i("PLB-N32 server ip=%u.%u.%u.%u port=%u",
+                 (unsigned int)server.ip[0],
+                 (unsigned int)server.ip[1],
+                 (unsigned int)server.ip[2],
+                 (unsigned int)server.ip[3],
                  (unsigned int)server.port);
     }
     plb_algo_demo_run();
