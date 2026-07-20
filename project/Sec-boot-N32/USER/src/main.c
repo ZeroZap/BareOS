@@ -6,6 +6,7 @@
  // Code cannot be added between /* NTFx CODE START xxxxx*/ and /* NTFx CODE END xxxxx*/
 /* NTFx CODE START Include*/
 #include "main.h"
+#include "secboot_n32_port.h"
 #include "secboot_n32_v1.h"
 #include "xy_log.h"
 #include <stdint.h>
@@ -41,7 +42,7 @@ int main(void)
     xy_log_init();
     xy_log_i("SecBoot-N32 UART4 log ready");
     xy_log_i("%s", SECBOOT_N32_VERSION_STR);
-    n32_uart5_secboot_init();
+    secboot_n32_port_uart_init();
     xy_log_i("SecBoot-N32 UART5 secboot V1 transport ready");
     secboot_log_reset_flags();
 #if SECBOOT_ENABLE_IWDG
@@ -60,9 +61,9 @@ int main(void)
     while(1)
     {
 #if SECBOOT_ENABLE_IWDG
-        IWDG_ReloadKey();
+        secboot_n32_port_watchdog_kick();
 #endif
-        n32_uart5_secboot_poll();
+        secboot_n32_port_uart_poll();
         secboot_n32_v1_poll();
         if ((int32_t)(mwTick - next_heartbeat) >= 0) {
             xy_log_i("SecBoot-N32 heartbeat UART5 rx=%u tx=%u rb=%u drop=%u last=%x",

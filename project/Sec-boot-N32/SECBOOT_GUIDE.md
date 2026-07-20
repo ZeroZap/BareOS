@@ -594,6 +594,35 @@ WRP/RDP/option bytes 保护暂不在当前单板 V1 bring-up 中实测，避免�
 | Tooling | 版本日志 | 待验证 | `SecBoot-N32 V1.1-dev` / `PLB-N32 App V1.1-dev` |
 | Production | WRP/RDP | 跳过 | 单板阶段不做，避免锁板 |
 
+### Porting Boundary
+
+SecBoot-N32 V1 已将 N32 硬件相关入口集中到 layout/port 层，便于后续 MCU
+移植时隔离硬件差异：
+
+| 文件 | 职责 |
+|---|---|
+| `USER/inc/secboot_n32_layout.h` | Flash/RAM 分区、App slot、mailbox 地址 |
+| `USER/inc/secboot_n32_port.h` | N32 port 接口声明 |
+| `USER/src/secboot_n32_port.c` | Flash IAP、UART5、watchdog、soft reset、App jump |
+| `USER/src/secboot_n32_v1.c` | SecBoot V1 协议、manifest、rollback、state、confirmed 逻辑 |
+
+后续移植到其他 MCU 时，优先保持 `secboot_n32_v1.c` 的协议/状态逻辑不变，
+替换对应平台的 layout 和 port 实现。新平台至少需要实现：
+
+| 接口 | 移植关注点 |
+|---|---|
+| `flash_read/erase/write` | Flash 基址、页大小、擦写对齐、IAP 解锁/上锁 |
+| `uart_init/read/write/poll` | recovery UART、超时读取、TX flush |
+| `uart_pending` | recovery 窗口内判断是否有 host 输入 |
+| `watchdog_kick` | 擦写 Flash、长时间 UART 传输期间喂狗 |
+| `soft_reset` | App mailbox confirmed 后软复位 |
+| `app_vector_check` | 平台启动向量/入口合法性校验 |
+| `jump_app` | 关闭中断、切换向量/栈/入口并跳转 App |
+| linker | App slot 起始地址、SRAM mailbox 保留区 |
+
+CH32V307/RISC-V 类平台需要重点重写 `app_vector_check` 和 `jump_app`，不能沿用
+Cortex-M 的 MSP/VTOR 逻辑。
+
 `project/PLB -N32` 已按 SecBoot App slot 链接：
 
 | 项目 | 值 |

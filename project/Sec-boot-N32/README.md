@@ -126,6 +126,11 @@ This HMAC path is only for bring-up. Production still needs a protected root key
 
 ## Next Steps
 
+The N32 hardware dependencies are isolated behind `secboot_n32_layout.h` and
+`secboot_n32_port.c`. Future MCU ports should keep the V1 protocol/state logic
+stable and replace the layout/port implementation for Flash IAP, UART,
+watchdog, reset, and App jump.
+
 | Step | Task |
 |---:|---|
 | 1 | Add boot public key storage/provisioning |
