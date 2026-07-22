@@ -8,8 +8,10 @@
 #define XY_SECBOOT_H
 
 #include "xy_secboot_config.h"
+#include "xy_secboot_bootcfg.h"
 #include "xy_secboot_crypto.h"
 #include "xy_secboot_partition.h"
+#include "xy_secboot_security.h"
 #include "xy_secboot_single_slot.h"
 
 #endif /* XY_SECBOOT_H */

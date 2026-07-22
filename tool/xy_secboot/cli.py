@@ -15,6 +15,7 @@ from .constants import APP_IMAGE_ADDR_N32, PRODUCT_ID_N32, SUITE_MARKET, UART_DE
 from .crc import crc32
 from .manifest import Manifest
 from .package import SecbootPackage, align_image
+from .portgen import generate_port, write_sample_config
 from .uart import FlashInterrupted, SecbootUartClient, available_ports, require_pyserial
 
 
@@ -174,6 +175,22 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return gui_main()
 
 
+def cmd_portgen(args: argparse.Namespace) -> int:
+    if args.sample_config:
+        write_sample_config(Path(args.sample_config), args.force)
+        print(f"wrote sample config {args.sample_config}")
+        return 0
+
+    paths = generate_port(
+        Path(args.config) if args.config else None,
+        Path(args.output),
+        args.force,
+    )
+    for path in paths:
+        print(f"wrote {path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="XY SecBoot host tool")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -249,6 +266,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     gui = sub.add_parser("gui", help="launch Tkinter GUI")
     gui.set_defaults(func=cmd_gui)
+
+    portgen = sub.add_parser("portgen", help="generate a SecBoot V1 MCU porting skeleton")
+    portgen.add_argument("--config", help="JSON porting config; defaults to a sample N32-like layout")
+    portgen.add_argument("--output", "-o", default="build/secboot_port", help="output directory")
+    portgen.add_argument("--sample-config", help="write a sample JSON config and exit")
+    portgen.add_argument("--force", action="store_true", help="overwrite existing generated files")
+    portgen.set_defaults(func=cmd_portgen)
     return parser
 
 

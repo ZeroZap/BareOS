@@ -10,7 +10,7 @@ extern "C" {
 
 #define SECBOOT_N32_PRODUCT_ID            0x00010001u
 
-#define SECBOOT_N32_VERSION_STR           "SecBoot-N32 V1.1-dev"
+#define SECBOOT_N32_VERSION_STR           "SecBoot-N32 V1.1.2-dev"
 
 #define SECBOOT_N32_UART_V1_VERSION       1u
 #define SECBOOT_N32_UART_V1_MAX_PAYLOAD   512u

@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "xy_secboot_security.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,8 @@ void secboot_n32_port_watchdog_kick(void);
 void secboot_n32_port_soft_reset(void);
 int secboot_n32_port_app_vector_check(uint32_t app_addr, uint32_t image_size);
 void secboot_n32_port_jump_app(uint32_t app_addr);
+
+const xy_secboot_security_ops_t *secboot_n32_port_security_ops(void);
 
 #ifdef __cplusplus
 }

@@ -6,6 +6,9 @@
 
 #include <string.h>
 
+#define SECBOOT_N32_WRP_GRANULARITY_PAGES 2u
+#define SECBOOT_N32_WRP_MAX_BITS          32u
+
 static uint32_t le32_read(const uint8_t *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
@@ -27,6 +30,112 @@ static int flash_range_ok(uint32_t address, size_t len)
     }
     return 1;
 }
+
+static int secboot_n32_wrp_mask_from_range(uint32_t address, uint32_t size,
+                                           uint32_t *mask)
+{
+    uint32_t start_page;
+    uint32_t end_page;
+    uint32_t page;
+
+    if (!mask || size == 0u || !flash_range_ok(address, size)) {
+        return -1;
+    }
+
+    start_page = (address - SECBOOT_N32_FLASH_BASE_ADDR) /
+                 SECBOOT_N32_FLASH_PAGE_SIZE;
+    end_page = ((address + size - 1u) - SECBOOT_N32_FLASH_BASE_ADDR) /
+               SECBOOT_N32_FLASH_PAGE_SIZE;
+
+    for (page = start_page; page <= end_page; page++) {
+        uint32_t bit = page / SECBOOT_N32_WRP_GRANULARITY_PAGES;
+        if (bit >= SECBOOT_N32_WRP_MAX_BITS) {
+            return -1;
+        }
+        *mask |= (1u << bit);
+    }
+
+    return 0;
+}
+
+static int secboot_n32_security_get_status(xy_secboot_security_status_t *status)
+{
+    if (!status) {
+        return -1;
+    }
+
+    if (FLASH_GetReadOutProtectionL2STS() != RESET) {
+        status->rdp_level = XY_SECBOOT_RDP_LEVEL_2;
+    } else if (FLASH_GetReadOutProtectionSTS() != RESET) {
+        status->rdp_level = XY_SECBOOT_RDP_LEVEL_1;
+    } else {
+        status->rdp_level = XY_SECBOOT_RDP_LEVEL_0;
+    }
+    status->wrp_mask = FLASH_GetWriteProtectionOB();
+
+    return 0;
+}
+
+static int secboot_n32_security_apply(const xy_secboot_security_config_t *config)
+{
+    xy_secboot_security_status_t status;
+    uint32_t wrp_mask = 0u;
+    size_t i;
+
+    if (!config || config->rdp_level > XY_SECBOOT_RDP_LEVEL_2) {
+        return -1;
+    }
+    if (config->wrp_range_count != 0u && !config->wrp_ranges) {
+        return -1;
+    }
+    if (config->rdp_level == XY_SECBOOT_RDP_LEVEL_2 &&
+        (config->flags & XY_SECBOOT_SECURITY_FLAG_ALLOW_RDP2) == 0u) {
+        return -1;
+    }
+
+    if (FLASH_ClockInit() == FLASH_HSICLOCK_DISABLE) {
+        return -1;
+    }
+
+    if (secboot_n32_security_get_status(&status) != 0 ||
+        status.rdp_level > config->rdp_level) {
+        return -1;
+    }
+
+    for (i = 0u; i < config->wrp_range_count; i++) {
+        if (secboot_n32_wrp_mask_from_range(config->wrp_ranges[i].address,
+                                            config->wrp_ranges[i].size,
+                                            &wrp_mask) != 0) {
+            return -1;
+        }
+    }
+
+    if (status.rdp_level < XY_SECBOOT_RDP_LEVEL_1 &&
+        config->rdp_level == XY_SECBOOT_RDP_LEVEL_1) {
+        if (FLASH_ReadOutProtectionL1(ENABLE) != FLASH_COMPL) {
+            return -1;
+        }
+    } else if (status.rdp_level < XY_SECBOOT_RDP_LEVEL_2 &&
+               config->rdp_level == XY_SECBOOT_RDP_LEVEL_2) {
+        if (wrp_mask != 0u) {
+            return -1;
+        }
+        if (FLASH_ReadOutProtectionL2_ENABLE() != FLASH_COMPL) {
+            return -1;
+        }
+    }
+
+    if (wrp_mask != 0u && FLASH_EnWriteProtection(wrp_mask) != FLASH_COMPL) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static const xy_secboot_security_ops_t s_secboot_n32_security_ops = {
+    secboot_n32_security_get_status,
+    secboot_n32_security_apply,
+};
 
 int secboot_n32_port_flash_read(uint32_t address, uint8_t *data, size_t len)
 {
@@ -167,4 +276,9 @@ void secboot_n32_port_jump_app(uint32_t app_addr)
     __DSB();
     __ISB();
     entry();
+}
+
+const xy_secboot_security_ops_t *secboot_n32_port_security_ops(void)
+{
+    return &s_secboot_n32_security_ops;
 }
