@@ -93,6 +93,20 @@ MCU can resume instruction execution within the documented wakeup latency, but
 the BSP must still wait for HSI/PLL readiness and switch SYSCLK back to the board
 run clock in `xy_hal_n32l40x_after_stop_restore_clock()`.
 
+## STOP lock fallback
+
+A STOP lock prevents STOP/STOP2 but does not require the CPU to busy-spin. When
+the PM policy requests STOP and the lock reduces the allowed mode to SLEEP, the
+PM core enters normal Cortex-M SLEEP with SysTick still running. SysTick or a
+peripheral interrupt wakes the CPU, so no low-power timer or elapsed-tick
+compensation is used for this path.
+
+The PLB-N32 validation image reports this path through `shallow`. Board testing
+with a referenced STOP lock measured approximately 982-987 shallow sleeps per
+second while `abort` remained zero. Releasing the final STOP lock stopped the
+shallow count and resumed LPTIM-driven STOP2 sleep. CPU and SLEEP locks still
+prevent all sleeping.
+
 ## Current Limitations
 
 - UART/SPI polling paths are implemented.

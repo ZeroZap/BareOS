@@ -30,7 +30,6 @@ int xy_hal_power_enter(xy_hal_power_mode_t mode, uint32_t wake_sources, uint32_t
     }
     else if (mode == XY_HAL_POWER_STANDBY || mode == XY_HAL_POWER_SHUTDOWN) PWR_EnterSTANDBYMode(PWR_STOPENTRY_WFI, 0u);
     else return XY_HAL_OK;
-    if (mode != XY_HAL_POWER_STOP) xy_hal_n32l40x_after_stop_restore_clock();
     xy_hal_n32l40x_after_wake();
     return XY_HAL_OK;
 }

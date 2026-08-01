@@ -25,6 +25,18 @@ static uint8_t s_wake_hook_count;
 static bool s_initialized;
 static xy_pm_stats_t s_stats;
 
+static bool pm_checks_allow_sleep(void)
+{
+    uint8_t i;
+
+    for (i = 0u; i < s_check_count; i++) {
+        if (!s_checks[i].fn(s_checks[i].arg)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static int pm_abort(void)
 {
     s_stats.abort_count++;
@@ -148,19 +160,10 @@ uint16_t xy_pm_get_lock_count(xy_hal_pm_lock_t lock)
 
 bool xy_pm_can_sleep(void)
 {
-    uint8_t i;
-
     if (xy_hal_power_get_allowed_mode() < s_pm.deepest_mode) {
         return false;
     }
-
-    for (i = 0u; i < s_check_count; i++) {
-        if (!s_checks[i].fn(s_checks[i].arg)) {
-            return false;
-        }
-    }
-
-    return true;
+    return pm_checks_allow_sleep();
 }
 
 xy_tick_t xy_pm_next_timeout_ticks(void)
@@ -196,6 +199,20 @@ int xy_pm_tickless_idle(void)
         return pm_abort();
     }
 
+    key = xy_hal_irq_save();
+    if (xy_hal_power_get_allowed_mode() < s_pm.deepest_mode) {
+        if (xy_hal_power_get_allowed_mode() >= XY_HAL_POWER_SLEEP &&
+            pm_checks_allow_sleep() &&
+            xy_hal_power_enter(XY_HAL_POWER_SLEEP, s_pm.wake_sources, 0u) == XY_HAL_OK) {
+            s_stats.shallow_sleep_count++;
+            xy_hal_irq_restore(key);
+            return 1;
+        }
+        xy_hal_irq_restore(key);
+        return pm_abort();
+    }
+    xy_hal_irq_restore(key);
+
     sleep_ticks = xy_pm_next_timeout_ticks();
     if (sleep_ticks == 0u) {
         return pm_abort();
@@ -216,11 +233,6 @@ int xy_pm_tickless_idle(void)
     s_stats.last_planned_ms = sleep_ms;
 
     key = xy_hal_irq_save();
-    if (s_pm.deepest_mode >= XY_HAL_POWER_STOP &&
-        xy_pm_get_lock_count(XY_HAL_PM_LOCK_STOP) != 0u) {
-        xy_hal_irq_restore(key);
-        return pm_abort();
-    }
     if (!xy_pm_can_sleep()) {
         xy_hal_irq_restore(key);
         return pm_abort();
@@ -277,6 +289,7 @@ void xy_pm_reset_stats(void)
 {
     s_stats.idle_calls = 0u;
     s_stats.sleep_count = 0u;
+    s_stats.shallow_sleep_count = 0u;
     s_stats.abort_count = 0u;
     s_stats.last_planned_ms = 0u;
     s_stats.last_elapsed_ms = 0u;

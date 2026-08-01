@@ -226,10 +226,11 @@ int main(void)
             xy_pm_stats_t stats;
 
             xy_pm_get_stats(&stats);
-            xy_log_i("PLB-N32 PM tick=%u idle=%u sleep=%u abort=%u plan=%u elapsed=%u locks=%u/%u/%u/%u",
+            xy_log_i("PLB-N32 PM tick=%u idle=%u sleep=%u shallow=%u abort=%u plan=%u elapsed=%u locks=%u/%u/%u/%u",
                      (unsigned int)now_ms,
                      (unsigned int)stats.idle_calls,
                      (unsigned int)stats.sleep_count,
+                     (unsigned int)stats.shallow_sleep_count,
                      (unsigned int)stats.abort_count,
                      (unsigned int)stats.last_planned_ms,
                      (unsigned int)stats.last_elapsed_ms,

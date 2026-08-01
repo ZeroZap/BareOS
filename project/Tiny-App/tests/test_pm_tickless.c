@@ -13,6 +13,8 @@ static xy_tick_t s_timeout_ticks;
 static xy_tick_t s_hook_ticks;
 static uint32_t s_hook_calls;
 static uint16_t s_lock_count[XY_HAL_PM_LOCK_COUNT];
+static xy_hal_power_mode_t s_entered_mode;
+static uint32_t s_power_enter_calls;
 
 static int check(int condition, const char *name)
 {
@@ -80,9 +82,10 @@ uint32_t xy_hal_lptimer_now_ms(void *timer)
 int xy_hal_power_enter(xy_hal_power_mode_t mode, uint32_t wake_sources,
                        uint32_t timeout_ms)
 {
-    (void)mode;
     (void)wake_sources;
     (void)timeout_ms;
+    s_entered_mode = mode;
+    s_power_enter_calls++;
     s_now_ms += s_wake_after_ms;
     return XY_HAL_OK;
 }
@@ -155,6 +158,8 @@ static void reset_fixture(void)
     s_timeout_ticks = XY_PM_TIMEOUT_FOREVER;
     s_hook_ticks = 0u;
     s_hook_calls = 0u;
+    s_entered_mode = XY_HAL_POWER_RUN;
+    s_power_enter_calls = 0u;
     for (uint32_t i = 0u; i < (uint32_t)XY_HAL_PM_LOCK_COUNT; i++) {
         s_lock_count[i] = 0u;
     }
@@ -256,15 +261,22 @@ static int test_stop_lock(void)
                     "STOP lock reference acquired");
     failed += check(xy_pm_get_lock_count(XY_HAL_PM_LOCK_STOP) == 2u,
                     "STOP lock count diagnosed");
-    failed += check(xy_pm_tickless_idle() == 0, "STOP lock rejects tickless STOP");
+    failed += check(xy_pm_tickless_idle() == 1, "STOP lock enters shallow sleep");
     failed += check(s_started_ms == 0u && xy_tick_now() == 0u,
-                    "STOP lock rejection does not program or advance");
+                    "shallow sleep does not program LPTIM or advance tick");
+    failed += check(s_entered_mode == XY_HAL_POWER_SLEEP && s_power_enter_calls == 1u,
+                    "STOP lock selects shallow power mode");
 
     failed += check(xy_pm_release_lock(XY_HAL_PM_LOCK_STOP) == XY_HAL_OK,
                     "STOP lock reference released");
     failed += check(xy_pm_get_lock_count(XY_HAL_PM_LOCK_STOP) == 1u,
                     "STOP lock count decremented");
-    failed += check(xy_pm_tickless_idle() == 0, "remaining STOP lock rejects sleep");
+    s_timeout_ticks = xy_tick_from_ms(2u);
+    failed += check(xy_pm_tickless_idle() == 1,
+                    "short deadline with STOP lock uses shallow sleep");
+    failed += check(s_power_enter_calls == 2u && s_started_ms == 0u,
+                    "short shallow sleep bypasses LPTIM minimum residency");
+    s_timeout_ticks = xy_tick_from_ms(500u);
     failed += check(xy_pm_release_lock(XY_HAL_PM_LOCK_STOP) == XY_HAL_OK,
                     "STOP lock released");
     failed += check(xy_pm_get_lock_count(XY_HAL_PM_LOCK_STOP) == 0u,
@@ -276,7 +288,8 @@ static int test_stop_lock(void)
                     "invalid lock diagnostic is zero");
 
     xy_pm_get_stats(&stats);
-    failed += check(stats.abort_count == 2u && stats.sleep_count == 1u,
+    failed += check(stats.abort_count == 0u && stats.sleep_count == 1u &&
+                    stats.shallow_sleep_count == 2u,
                     "STOP lock stats");
     return failed;
 }

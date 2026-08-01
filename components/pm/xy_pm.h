@@ -38,6 +38,7 @@ typedef struct {
 typedef struct {
     uint32_t idle_calls;
     uint32_t sleep_count;
+    uint32_t shallow_sleep_count;
     uint32_t abort_count;
     uint32_t last_planned_ms;
     uint32_t last_elapsed_ms;
