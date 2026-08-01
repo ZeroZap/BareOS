@@ -32,6 +32,10 @@ set(COMP_SRCS
     # log
     ${COMP}/log/xy_log.c
 
+    # hal / power management
+    ${COMP}/hal/xy_hal_stub.c
+    ${COMP}/pm/xy_pm.c
+
     # crypto
     ${COMP}/crypto/src/xy_crc.c
     ${COMP}/crypto/src/xy_aes.c
@@ -47,6 +51,8 @@ set(COMP_SRCS
     ${COMP}/crypto/src/xy_random.c
 
     # protothreads / timers
+    ${COMP}/tick/xy_tick.c
+    ${COMP}/timer/xy_timer.c
     ${COMP}/pt/process.c
     ${COMP}/pt/etimer.c
     ${COMP}/pt/ctimer.c
@@ -56,6 +62,7 @@ set(COMP_SRCS
     # sys / io
     ${COMP}/sys/xy_sys.c
     ${COMP}/io/xy_io.c
+    ${COMP}/event/xy_event.c
 
     # TLV
     ${COMP}/tlv/xy_tlv.c
@@ -117,9 +124,13 @@ set(INCDIRS
     src
     ${COMP}/clib
     ${COMP}/log
+    ${COMP}/hal
     ${COMP}/crypto/inc
     ${COMP}/pt
+    ${COMP}/pm
+    ${COMP}/timer
     ${COMP}/tlv
+    ${COMP}/tick
     ${COMP}/btn
     ${COMP}/gnss
     ${COMP}/ais
@@ -133,6 +144,7 @@ set(INCDIRS
     ${COMP}/mem
     ${COMP}/sys
     ${COMP}/io
+    ${COMP}/event
     ${COMP}/at/include
     ${COMP}/cell
     ${COMP}/wifi
@@ -195,4 +207,22 @@ add_test(NAME bareos_tests_all COMMAND bareos_tests)
 set_tests_properties(bareos_tests_all PROPERTIES
     LABELS  "regression"
     TIMEOUT 30
+)
+
+add_executable(pm_tickless_tests
+    ${COMP}/pm/xy_pm.c
+    ${COMP}/tick/xy_tick.c
+    tests/test_pm_tickless.c
+)
+target_include_directories(pm_tickless_tests PRIVATE
+    ${COMP}/clib
+    ${COMP}/hal
+    ${COMP}/pm
+    ${COMP}/tick
+)
+target_compile_definitions(pm_tickless_tests PRIVATE PC_BUILD=1)
+add_test(NAME pm_tickless_tests COMMAND pm_tickless_tests)
+set_tests_properties(pm_tickless_tests PROPERTIES
+    LABELS  "pm;tickless"
+    TIMEOUT 10
 )

@@ -5,23 +5,20 @@
  * Provides the three functions required by at_chat.c:
  *   at_malloc()   — memory allocation
  *   at_free()     — memory free
- *   at_get_ms()   — millisecond timestamp
+ *   at_get_ms()   — millisecond timestamp derived from the BareOS tick
  *
  * No RTOS is required.  The at_adapter_t.lock/unlock fields in your
  * adapter struct must be set to NULL (see 架构设计.md §5.2).
  *
- * HOW TO WIRE UP sys_tick_ms:
- *   Declare  volatile uint32_t g_sys_tick_ms;  in bsp/bsp_tick.c
- *   Increment it inside SysTick_Handler():
- *       void SysTick_Handler(void) { g_sys_tick_ms++; }
- *   Expose it via  extern volatile uint32_t g_sys_tick_ms;  in bsp/bsp_tick.h
+ * HOW TO WIRE UP the system tick:
+ *   Define XY_TICK_HZ to match the BSP tick rate.
+ *   Call xy_tick_advance(1) from the tick ISR, or advance by the elapsed
+ *   low-power timer ticks after tickless sleep.
  */
 
 #include "../include/at_port.h"
 #include "xy_mem.h"  /* xy_malloc / xy_free */
-
-/* ── millisecond counter provided by the BSP SysTick handler ─────── */
-extern volatile unsigned int g_sys_tick_ms;
+#include "xy_tick.h"
 
 /* ── Memory ──────────────────────────────────────────────────────── */
 
@@ -39,5 +36,5 @@ void at_free(void *ptr)
 
 unsigned int at_get_ms(void)
 {
-    return g_sys_tick_ms;
+    return xy_tick_now_ms();
 }

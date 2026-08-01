@@ -43,6 +43,7 @@ DEFS += -DAT_WORK_STATIC_POOL_EN=1
 DEFS += -DAT_WORK_POOL_COUNT=8
 DEFS += -DAT_WORK_ITEM_DATA_SIZE=256
 DEFS += -DPLB_N32_APP_IMAGE=1
+DEFS += -DPLB_N32_ENABLE_TICKLESS=1
 DEFS += -DVECT_TAB_OFFSET=0x7800
 ifeq ($(NO_CONFIRM), y)
 DEFS += -DPLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE=0
@@ -79,12 +80,16 @@ C_DIRS += $(HAL_DIR)/n32l40x_std_periph_driver/src
 C_DIRS += $(HAL_DIR)/n32l40x_usbfs_driver/src
 C_DIRS += $(COMPONENTS_DIR)/clib
 C_DIRS += $(COMPONENTS_DIR)/log
+C_DIRS += $(COMPONENTS_DIR)/hal/N32L40x
 ## NTFx CODE END C sources ##
 
 SRC_OBJS_DIRS += $(foreach DIR, $(C_DIRS), $(wildcard $(DIR)/*.c))
 C_SOURCES = $(SRC_OBJS_DIRS)
 USB_STORAGE_SOURCES := $(wildcard ../USER/src/usb_storage_*.c)
 C_SOURCES := $(filter-out $(USB_STORAGE_SOURCES),$(C_SOURCES))
+PWR_SOURCE := $(HAL_DIR)/n32l40x_std_periph_driver/src/n32l40x_pwr.c
+C_SOURCES := $(filter-out $(PWR_SOURCE),$(C_SOURCES))
+C_SOURCES += $(PWR_SOURCE)
 
 ######################################
 # ASM sources
@@ -103,6 +108,10 @@ C_INCS += $(HAL_DIR)/n32l40x_usbfs_driver/inc
 C_INCS += $(COMPONENTS_DIR)/clib
 C_INCS += $(COMPONENTS_DIR)/log
 C_INCS += $(COMPONENTS_DIR)/mem
+C_INCS += $(COMPONENTS_DIR)/hal
+C_INCS += $(COMPONENTS_DIR)/hal/N32L40x
+C_INCS += $(COMPONENTS_DIR)/tick
+C_INCS += $(COMPONENTS_DIR)/pm
 C_INCS += $(COMPONENTS_DIR)/at/include
 C_INCS += $(COMPONENTS_DIR)/crypto/inc
 C_INCS += $(COMPONENTS_DIR)/storage/fee
@@ -119,6 +128,15 @@ C_SOURCES += $(CRYPTO_SOURCES)
 
 MEM_SOURCES += $(COMPONENTS_DIR)/mem/xy_mem.c
 C_SOURCES += $(MEM_SOURCES)
+
+HAL_SOURCES += $(COMPONENTS_DIR)/hal/xy_hal_stub.c
+C_SOURCES += $(HAL_SOURCES)
+
+TICK_SOURCES += $(COMPONENTS_DIR)/tick/xy_tick.c
+C_SOURCES += $(TICK_SOURCES)
+
+PM_SOURCES += $(COMPONENTS_DIR)/pm/xy_pm.c
+C_SOURCES += $(PM_SOURCES)
 
 AT_SOURCES += $(COMPONENTS_DIR)/at/src/at_chat.c
 AT_SOURCES += $(COMPONENTS_DIR)/at/src/at_port.c

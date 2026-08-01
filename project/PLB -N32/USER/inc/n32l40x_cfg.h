@@ -36,6 +36,8 @@ extern bool DMA_Configuration(void);
 extern bool GPIO_Configuration(void);
 extern bool USART_Configuration(void);
 extern bool LPTIM_Configuration(void);
+extern uint32_t n32_lptim_clock_hz(void);
+extern uint32_t n32_lptim_max_timeout_ms(void);
 extern bool RTC_Configuration(void);
 extern bool IWDG_Configuration(void);
 extern bool ADC_Configuration(void);

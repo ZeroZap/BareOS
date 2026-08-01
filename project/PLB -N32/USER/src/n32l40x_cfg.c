@@ -4,6 +4,8 @@
  */
 
 #include "n32l40x_cfg.h"
+#include "xy_hal.h"
+#include "xy_hal_n32l40x.h"
 #include "xy_rb.h"
 #include <stdio.h>
 /* NTFx CODE START */
@@ -17,6 +19,44 @@ volatile uint32_t g_n32_uart5_rb_pending;
 volatile uint8_t g_n32_uart5_last_rx;
 static xy_rb_t s_uart5_rx_rb;
 static uint8_t s_uart5_rx_pool[128];
+static uint32_t s_n32_lptim_clock_hz;
+
+#ifndef PLB_N32_LSI_HZ
+#define PLB_N32_LSI_HZ 40000u
+#endif
+
+uint32_t n32_lptim_clock_hz(void)
+{
+    return s_n32_lptim_clock_hz;
+}
+
+uint32_t n32_lptim_max_timeout_ms(void)
+{
+    if (s_n32_lptim_clock_hz == 0u) {
+        return 0u;
+    }
+    return (uint32_t)((65535ULL * 1000ULL) / s_n32_lptim_clock_hz);
+}
+
+void xy_hal_n32l40x_after_stop_restore_clock(void)
+{
+    RCC_EnableHsi(ENABLE);
+    (void)RCC_WaitHsiStable();
+    RCC_ConfigHclk(RCC_SYSCLK_DIV1);
+    RCC_ConfigPclk2(RCC_HCLK_DIV4);
+    RCC_ConfigPclk1(RCC_HCLK_DIV4);
+    RCC_ConfigPll(RCC_PLL_HSI_PRE_DIV2, RCC_PLL_MUL_12, RCC_PLLDIVCLK_ENABLE);
+    RCC_EnablePll(ENABLE);
+    while (RCC_GetFlagStatus(RCC_CTRL_FLAG_PLLRDF) != SET) {
+    }
+    FLASH_PrefetchBufSet(FLASH_PrefetchBuf_DIS);
+    FLASH_iCacheCmd(FLASH_iCache_EN);
+    FLASH_SetLatency(FLASH_LATENCY_1);
+    RCC_ConfigSysclk(RCC_SYSCLK_SRC_PLLCLK);
+    while (RCC_GetSysclkSrc() != 0x0c) {
+    }
+    SystemCoreClockUpdate();
+}
 
 static void usbfs_interrupts_config(void)
 {
@@ -322,8 +362,14 @@ bool RCC_Configuration(void)
     RCC_EnableTrng1mClk(ENABLE);
     RCC_ConfigRngcClk(RCC_RNGCCLK_SYSCLK_DIV1);
      
-    /*config LPTIM clock*/
-    RCC_ConfigLPTIMClk(RCC_LPTIMCLK_SRC_APB1);
+    /* Prefer the accurate LSE for tickless; fall back to LSI if unavailable. */
+    if (RCC_GetFlagStatus(RCC_LDCTRL_FLAG_LSERD) == SET) {
+        RCC_ConfigLPTIMClk(RCC_LPTIMCLK_SRC_LSE);
+        s_n32_lptim_clock_hz = 32768u;
+    } else {
+        RCC_ConfigLPTIMClk(RCC_LPTIMCLK_SRC_LSI);
+        s_n32_lptim_clock_hz = PLB_N32_LSI_HZ;
+    }
     RCC_EnableRETPeriphClk(RCC_RET_PERIPH_LPTIM,ENABLE);
      
     /*config RTC clock*/
@@ -343,8 +389,9 @@ bool RCC_Configuration(void)
     RCC_ConfigSysclk(RCC_SYSCLK_SRC_PLLCLK);
     /* Wait till PLLCLK is used as system clock source */
     while (RCC_GetSysclkSrc() != 0x0c) ;
+    SystemCoreClockUpdate();
     /*  Configure the SysTick to have interrupt in 1ms time basis*/
-    SysTick_Config(48000);
+    SysTick_Config(SystemCoreClock / 1000u);
     NVIC_SetPriority(SysTick_IRQn, 0);
 /* NTFx CODE END */
     return true;
@@ -719,9 +766,16 @@ bool USART_Configuration(void)
  */
 bool LPTIM_Configuration(void)
 {
+    xy_hal_lptimer_config_t config;
     
 /* NTFx CODE END */
-    return true;
+    config.clock_hz = n32_lptim_clock_hz();
+    config.mode = XY_HAL_LPTIMER_ONESHOT;
+    config.run_in_stop = true;
+    config.wakeup = true;
+    config.priority = 1u;
+
+    return xy_hal_lptimer_init(LPTIM, &config) == XY_HAL_OK;
 }
 /* NTFx CODE START */
 /**

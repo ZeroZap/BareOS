@@ -8,6 +8,8 @@
 #include "n32l40x_cfg.h"
 #include "n32l40x.h"
 #include "n32l40x_iwdg.h"
+#include "xy_tick.h"
+#include "xy_hal.h"
 #include "usb_istr.h"
 #include "usb_int.h"
 /* NTFx CODE END */
@@ -15,7 +17,6 @@
 /* NTFx CODE START */
 extern __IO uint32_t mwTick;
 extern void n32_debug_log_write(const char *str);
-volatile unsigned int g_sys_tick_ms;
 /**
  * @brief  This function handles NMI exception.
  */
@@ -109,9 +110,14 @@ void DebugMon_Handler(void)
 void SysTick_Handler(void)
 {
     mwTick++;
-    g_sys_tick_ms++;
+    xy_tick_advance(1u);
 /* NTFx CODE END */
 
+}
+
+void LPTIM_WKUP_IRQHandler(void)
+{
+    xy_hal_lptimer_irq_handler(LPTIM);
 }
 /* NTFx CODE START(EXTI1_IRQHandler)*/
 /**
