@@ -5,6 +5,7 @@
 #include "xy_mem.h"
 #include "xy_stdio.h"
 #include "xy_string.h"
+#include "xy_tick.h"
 
 #ifndef PLB_N32_ENABLE_AT_SELFTEST
 #define PLB_N32_ENABLE_AT_SELFTEST 0
@@ -25,6 +26,7 @@ static unsigned int s_selftest_step;
 static bool s_selftest_active;
 static bool s_selftest_waiting;
 static bool s_selftest_urc_received;
+static uint32_t s_selftest_urc_deadline_ms;
 
 static int plb_n32_at_parse_qirecv(const char *buf, int len,
                                    int *id, int *bytes, int *hdr)
@@ -129,6 +131,9 @@ static void plb_n32_at_selftest_response(at_response_t *response)
     }
 
     s_selftest_step++;
+    if (s_selftest_step == command_count + 2u) {
+        s_selftest_urc_deadline_ms = xy_tick_now_ms() + 1500u;
+    }
 }
 #endif
 
@@ -184,6 +189,7 @@ bool plb_n32_at_selftest_start(void)
     s_selftest_step = 0u;
     s_selftest_waiting = false;
     s_selftest_urc_received = false;
+    s_selftest_urc_deadline_ms = 0u;
     s_selftest_active = true;
     xy_log_i("PLB-N32 AT selftest start");
     return true;
@@ -226,6 +232,10 @@ void plb_n32_at_process(void)
             } else if (s_selftest_urc_received) {
                 s_selftest_active = false;
                 xy_log_i("PLB-N32 AT selftest PASSED");
+            } else if ((int32_t)(xy_tick_now_ms() -
+                                 s_selftest_urc_deadline_ms) >= 0) {
+                s_selftest_active = false;
+                xy_log_w("PLB-N32 AT selftest FAILED reason=URC_TIMEOUT");
             }
         }
 #endif

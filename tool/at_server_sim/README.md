@@ -84,6 +84,61 @@ python tool/at_server_sim/at_server_sim.py --port COM8 --response-delay-ms 700
 
 AT 组件普通命令默认超时为 500 ms。该配置可用于验证晚到响应和重试行为。
 
+### QISEND 故障注入
+
+不返回 `>`，验证 5 秒 prompt timeout：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --duration 12 --drop-prompt
+```
+
+接收完原始 payload 后返回 `ERROR`：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --duration 12 --send-result error
+```
+
+接收 payload 后不返回任何结果，验证 10 秒 data-result timeout：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --duration 18 --send-result drop
+```
+
+### URC 截断
+
+只发送 URC header，缺少换行和 payload：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --duration 12 --urc-fault header
+```
+
+发送完整 header 但只发送部分 payload：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --duration 12 --urc-fault payload
+```
+
+带 URC deadline 的自检固件预期在 1.5 秒内输出：
+
+```text
+PLB-N32 AT selftest FAILED reason=URC_TIMEOUT
+```
+
+### 第三阶段板测矩阵
+
+每条命令单独启动一次模拟器，模拟器开始监听后按一次板卡复位键。正常分片、prompt 和发送结果故障可直接复用已 confirmed 的 counter33 镜像。
+
+| 用例 | 模拟器参数 | 板端预期 |
+|---|---|---|
+| 逐字节分片 | `--fragment-size 1 --fragment-delay-ms 5` | `AT selftest PASSED` |
+| 丢失 prompt | `--drop-prompt` | `FAILED command=AT+QISEND`，约 5 秒 |
+| payload 后 ERROR | `--send-result error` | `FAILED command=AT+QISEND` |
+| payload 后无响应 | `--send-result drop` | `FAILED command=AT+QISEND`，约 10 秒 |
+| URC header 截断 | `--urc-fault header` | `FAILED reason=URC_TIMEOUT` |
+| URC payload 截断 | `--urc-fault payload` | `FAILED reason=URC_TIMEOUT` |
+
+URC timeout 日志需要包含本节 deadline 修复的 counter34 或更新镜像。故障用例结束后应确认 `rb=0`、`drop=0`，且 UART5 RX window 最终关闭并重新允许 STOP2。
+
 ## 建议的板端验证顺序
 
 1. 显式调用 `plb_n32_at_init()`，并在主循环持续调用 `plb_n32_at_process()`。

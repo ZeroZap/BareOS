@@ -41,6 +41,9 @@ class SimulatorConfig:
     fragment_delay_ms: int = 0
     drop_commands: list[Pattern[str]] = field(default_factory=list)
     error_commands: list[Pattern[str]] = field(default_factory=list)
+    drop_prompt: bool = False
+    send_result: str = "ok"
+    urc_fault: str = "none"
 
 
 class ATServerSimulator:
@@ -85,7 +88,12 @@ class ATServerSimulator:
                     self.payloads.append(payload)
                     self.log(f"RX DATA ({len(payload)}): {payload.hex(' ')}")
                     self.raw_buffer.clear()
-                    self._respond(self.raw_success)
+                    if self.config.send_result == "ok":
+                        self._respond(self.raw_success)
+                    elif self.config.send_result == "error":
+                        self._respond(b"\r\nERROR\r\n")
+                    else:
+                        self.log("TX DATA RESULT: <dropped>")
                 continue
 
             byte = data[offset]
@@ -173,7 +181,14 @@ class ATServerSimulator:
             self._respond(b"\r\nOK\r\n")
         elif upper == "AT+SIMURC=RECV":
             self._respond(b"\r\nOK\r\n")
-            self.inject(self.receive_urc(0, b"HELLO"))
+            urc = self.receive_urc(0, b"HELLO")
+            if self.config.urc_fault == "header":
+                header_start = urc.find(b"+QIURC:")
+                header_end = urc.find(b"\n", header_start)
+                urc = urc[:header_end]
+            elif self.config.urc_fault == "payload":
+                urc = urc[:-4]
+            self.inject(urc)
         elif upper == "AT+SIMURC=CLOSED":
             self._respond(b"\r\nOK\r\n")
             self.inject(b'\r\n+QIURC: "closed",0\r\n')
@@ -181,6 +196,9 @@ class ATServerSimulator:
             self._respond(b"\r\nERROR\r\n")
 
     def _start_raw(self, length: int, success: bytes) -> None:
+        if self.config.drop_prompt:
+            self.log("TX PROMPT: <dropped>")
+            return
         self.raw_remaining = length
         self.raw_success = success
         self.raw_buffer.clear()
@@ -241,6 +259,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fragment-delay-ms", type=int, default=0, help="delay between fragments")
     parser.add_argument("--drop-command", action="append", default=[], metavar="REGEX", help="drop matching responses")
     parser.add_argument("--error-command", action="append", default=[], metavar="REGEX", help="reply ERROR to matches")
+    parser.add_argument("--drop-prompt", action="store_true", help="do not send > for QISEND/CIPSEND")
+    parser.add_argument(
+        "--send-result",
+        choices=("ok", "error", "drop"),
+        default="ok",
+        help="response after raw payload, default: ok",
+    )
+    parser.add_argument(
+        "--urc-fault",
+        choices=("none", "header", "payload"),
+        default="none",
+        help="truncate AT+SIMURC=RECV injection",
+    )
     parser.add_argument("--urc", action="append", default=[], help=r"periodic URC text; supports \r and \n")
     parser.add_argument("--urc-interval", type=float, default=0.0, help="seconds between periodic URCs")
     parser.add_argument("--duration", type=float, default=0.0, help="stop after N seconds; 0 runs until Ctrl-C")
@@ -276,6 +307,9 @@ def run(args: argparse.Namespace) -> int:
             fragment_delay_ms=max(args.fragment_delay_ms, 0),
             drop_commands=compile_patterns(args.drop_command),
             error_commands=compile_patterns(args.error_command),
+            drop_prompt=args.drop_prompt,
+            send_result=args.send_result,
+            urc_fault=args.urc_fault,
         )
         expected = compile_patterns(args.expect_command)
         urcs = [decode_escaped(value) for value in args.urc]

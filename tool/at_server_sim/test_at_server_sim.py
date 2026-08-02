@@ -37,6 +37,22 @@ class ATServerSimulatorTests(unittest.TestCase):
         simulator.feed(b"AT+QISEND=0,3\rXYZ")
         self.assertEqual(simulator.payloads, [b"XYZ"])
 
+    def test_qisend_prompt_can_be_dropped(self) -> None:
+        simulator, writes = self.make_simulator(SimulatorConfig(drop_prompt=True))
+        simulator.feed(b"AT+QISEND=0,3\r\n")
+        self.assertEqual(writes, [])
+        self.assertEqual(simulator.raw_remaining, 0)
+
+    def test_qisend_payload_can_return_error_or_no_result(self) -> None:
+        simulator, writes = self.make_simulator(SimulatorConfig(send_result="error"))
+        simulator.feed(b"AT+QISEND=0,3\r\nABC")
+        self.assertEqual(b"".join(writes), b">\r\nERROR\r\n")
+        self.assertEqual(simulator.payloads, [b"ABC"])
+
+        simulator, writes = self.make_simulator(SimulatorConfig(send_result="drop"))
+        simulator.feed(b"AT+QISEND=0,3\r\nABC")
+        self.assertEqual(b"".join(writes), b">")
+
     def test_drop_and_error_faults(self) -> None:
         config = SimulatorConfig(
             drop_commands=[re.compile(r"NORESP")],
@@ -75,6 +91,15 @@ class ATServerSimulatorTests(unittest.TestCase):
         self.assertEqual(simulator.receive_urc(1, b"AB"), b"\r\n+RECEIVE,1,2:AB")
         simulator.config.profile = "esp_at"
         self.assertEqual(simulator.receive_urc(2, b"XYZ"), b"\r\n+IPD,2,3:XYZ")
+
+    def test_simulated_receive_urc_can_be_truncated(self) -> None:
+        simulator, writes = self.make_simulator(SimulatorConfig(urc_fault="header"))
+        simulator.feed(b"AT+SIMURC=RECV\r\n")
+        self.assertEqual(b"".join(writes), b'\r\nOK\r\n\r\n+QIURC: "recv",0,5')
+
+        simulator, writes = self.make_simulator(SimulatorConfig(urc_fault="payload"))
+        simulator.feed(b"AT+SIMURC=RECV\r\n")
+        self.assertEqual(b"".join(writes), b'\r\nOK\r\n\r\n+QIURC: "recv",0,5\nHEL')
 
     def test_qiopen_reports_link_id_not_context_id(self) -> None:
         simulator, writes = self.make_simulator()
