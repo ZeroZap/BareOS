@@ -5,6 +5,7 @@
 #include "plb_comm.h"
 #include "plb_comm_cell_backend.h"
 #include "plb_pc_bsp.h"
+#include "xy_cell.h"
 #include "xy_gnss.h"
 #include "xy_log.h"
 #include "xy_mem.h"
@@ -70,6 +71,15 @@ static void fake_inject(const char *resp)
     s_rx_pos = 0;
 }
 
+static void fake_reset(void)
+{
+    memset(s_tx, 0, sizeof(s_tx));
+    s_tx_len = 0u;
+    s_rx = NULL;
+    s_rx_len = 0u;
+    s_rx_pos = 0u;
+}
+
 static void drive(at_obj_t *at, unsigned int step_ms)
 {
     at_obj_process(at);
@@ -93,6 +103,7 @@ static void test_cell_backend_send_ok(void)
     };
     xy_gnss_pos_t pos;
 
+    fake_reset();
     memset(&pos, 0, sizeof(pos));
     pos.valid = true;
     pos.lat_1e7 = 312375100;
@@ -136,9 +147,58 @@ static void test_cell_backend_send_ok(void)
     at_obj_destroy(at);
 }
 
+static void test_ec2x_open_and_binary_receive_urc(void)
+{
+    static at_adapter_t adap = {
+        NULL,
+        NULL,
+        fake_write,
+        fake_read,
+        NULL,
+        NULL,
+#if AT_URC_WARCH_EN
+        128,
+#endif
+        256,
+    };
+    at_obj_t *at;
+    uint8_t payload[8] = {0};
+    int received;
+
+    fake_reset();
+    plb_pc_bsp_init();
+    at = at_obj_create(&adap);
+    CHECK_TRUE(at != NULL);
+    if (!at) return;
+
+    xy_cell_init(at, CELL_MDM_EC2X);
+    CHECK_TRUE(xy_cell_start_sock_open(0, "TCP", "127.0.0.1", 9000));
+    for (int i = 0; i < 3 && strstr(s_tx, "AT+QIOPEN=") == NULL; i++) {
+        at_obj_process(at);
+    }
+    CHECK_TRUE(strstr(s_tx, "AT+QIOPEN=0,0,\"TCP\",\"127.0.0.1\",9000,0,1\r\n") != NULL);
+
+    fake_inject("\r\nOK\r\n\r\n+QIOPEN: 0,0\r\n");
+    for (int i = 0; i < 3 && !xy_cell_op_done(); i++) {
+        at_obj_process(at);
+    }
+    CHECK_TRUE(xy_cell_op_done());
+    CHECK_TRUE(xy_cell_op_ok());
+    CHECK_TRUE(xy_cell_sock_is_open(0));
+
+    fake_inject("\r\n+QIURC: \"recv\",0,5\nHELLO\r\n");
+    at_obj_process(at);
+    received = xy_cell_sock_recv(0, payload, sizeof(payload));
+    CHECK_EQ(received, 5);
+    CHECK_TRUE(memcmp(payload, "HELLO", 5) == 0);
+
+    at_obj_destroy(at);
+}
+
 int main(void)
 {
     test_cell_backend_send_ok();
+    test_ec2x_open_and_binary_receive_urc();
     fprintf(stderr, "PLB cell backend tests: %d checks, %d failures\n", s_cases, s_failures);
     return s_failures;
 }

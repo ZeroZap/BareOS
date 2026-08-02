@@ -15,6 +15,8 @@
 #include "xy_ais.h"
 #include "xy_crc.h"
 #include "xy_ctype.h"
+#include "xy_mem.h"
+#include "xy_tick.h"
 #include "at_chat.h"
 
 /* ── Test harness globals ──────────────────────────────────────────────── */
@@ -244,17 +246,35 @@ static void test_urc_recv_split(void)
 /* ── Sprint 4: at_prompt_send_step state machine ───────────────────────── */
 
 /* Fake adapter to record the raw bytes written during the prompt sequence */
-static uint8_t s_fake_write_buf[64];
+XY_MEM_POOL_DECLARE(s_at_test_mem, 8192);
+
+static uint8_t s_fake_write_buf[512];
 static unsigned s_fake_write_len = 0;
+static uint8_t s_fake_read_buf[512];
+static unsigned s_fake_read_len;
+static unsigned s_fake_read_pos;
 static unsigned int fake_write(const void *data, unsigned int len)
 {
-    if (len > sizeof(s_fake_write_buf)) len = sizeof(s_fake_write_buf);
-    memcpy(s_fake_write_buf, data, len);
-    s_fake_write_len = len;
+    unsigned int copy = len;
+
+    if (copy > sizeof(s_fake_write_buf) - s_fake_write_len) {
+        copy = (unsigned int)(sizeof(s_fake_write_buf) - s_fake_write_len);
+    }
+    memcpy(&s_fake_write_buf[s_fake_write_len], data, copy);
+    s_fake_write_len += copy;
     return len;
 }
 static unsigned int fake_read(void *data, unsigned int len)
-{ (void)data; (void)len; return 0; }
+{
+    unsigned int available = s_fake_read_len - s_fake_read_pos;
+
+    if (available > len) available = len;
+    if (available != 0u) {
+        memcpy(data, &s_fake_read_buf[s_fake_read_pos], available);
+        s_fake_read_pos += available;
+    }
+    return available;
+}
 
 static at_adapter_t s_fake_adap = {
     .lock = NULL, .unlock = NULL,
@@ -264,6 +284,20 @@ static at_adapter_t s_fake_adap = {
 /* Fake at_env_t that just returns programmable values */
 static char *s_recv_inject = "";
 static int   s_state_done  = 0;
+
+static void fake_reset_io(void)
+{
+    s_fake_write_len = 0u;
+    s_fake_read_len = 0u;
+    s_fake_read_pos = 0u;
+}
+
+static void fake_inject(const char *data)
+{
+    s_fake_read_len = (unsigned int)strlen(data);
+    s_fake_read_pos = 0u;
+    memcpy(s_fake_read_buf, data, s_fake_read_len);
+}
 
 static char *fake_contains(at_env_t *e, const char *s)
 { (void)e; return strstr(s_recv_inject, s); }
@@ -352,6 +386,162 @@ static void test_prompt_send_step(void)
     }
 }
 
+/* ── AT command queue end-to-end behavior ─────────────────────────────── */
+
+static at_resp_code s_callback_code;
+static unsigned int s_callback_count;
+static unsigned int s_callback_recv_len;
+static char s_callback_response[128];
+
+static void command_callback(at_response_t *response)
+{
+    unsigned int copy = response->recvcnt;
+
+    if (copy >= sizeof(s_callback_response)) copy = sizeof(s_callback_response) - 1u;
+    memcpy(s_callback_response, response->recvbuf, copy);
+    s_callback_response[copy] = '\0';
+    s_callback_code = response->code;
+    s_callback_recv_len = response->recvcnt;
+    s_callback_count++;
+}
+
+static void command_fixture_reset(void)
+{
+    XY_MEM_POOL_INIT(s_at_test_mem);
+    xy_tick_init();
+    fake_reset_io();
+    s_callback_code = AT_RESP_OK;
+    s_callback_count = 0u;
+    s_callback_recv_len = 0u;
+    s_callback_response[0] = '\0';
+}
+
+static at_obj_t *command_create_object(void)
+{
+    static const at_adapter_t adapter = {
+        .lock = NULL,
+        .unlock = NULL,
+        .write = fake_write,
+        .read = fake_read,
+        .error = NULL,
+        .debug = NULL,
+#if AT_URC_WARCH_EN
+        .urc_bufsize = 128u,
+#endif
+        .recv_bufsize = 128u,
+    };
+
+    return at_obj_create(&adapter);
+}
+
+static unsigned int count_command_writes(const char *command)
+{
+    unsigned int count = 0u;
+    size_t command_len = strlen(command);
+
+    for (unsigned int i = 0u; i + command_len <= s_fake_write_len; i++) {
+        if (memcmp(&s_fake_write_buf[i], command, command_len) == 0) count++;
+    }
+    return count;
+}
+
+static void test_at_command_queue(void)
+{
+    TEST_CASE("AT queue: command appends CRLF and accepts fragmented response") {
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.prefix = "+CSQ:";
+            attr.timeout = 50u;
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+CSQ"));
+            TEST_TRUE(at_obj_busy(at));
+
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 8u);
+            TEST_MEM_EQ(s_fake_write_buf, "AT+CSQ\r\n", 8u);
+
+            fake_inject("\r\n+CSQ: 18");
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 0u);
+            fake_inject(",0\r\nOK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            TEST_TRUE(strstr(s_callback_response, "+CSQ: 18,0") != NULL);
+            TEST_TRUE(s_callback_recv_len > 0u);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: ERROR performs initial send plus two delayed retries") {
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.timeout = 50u;
+            attr.retry = 2u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+FAIL"));
+
+            for (unsigned int attempt = 0u; attempt < 3u; attempt++) {
+                at_obj_process(at);
+                fake_inject("\r\nERROR\r\n");
+                at_obj_process(at);
+                if (attempt < 2u) {
+                    xy_tick_advance(xy_tick_from_ms(101u));
+                    at_obj_process(at);
+                }
+            }
+
+            TEST_EQ(count_command_writes("AT+FAIL\r\n"), 3u);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_ERROR);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: timeout performs initial send plus two retries") {
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.timeout = 10u;
+            attr.retry = 2u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+NORESP"));
+
+            for (unsigned int attempt = 0u; attempt < 3u; attempt++) {
+                at_obj_process(at);
+                xy_tick_advance(xy_tick_from_ms(11u));
+                at_obj_process(at);
+            }
+
+            TEST_EQ(count_command_writes("AT+NORESP\r\n"), 3u);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_TIMEOUT);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+}
+
 /* ── Main entry ────────────────────────────────────────────────────────── */
 
 static void print_usage(const char *prog)
@@ -388,6 +578,7 @@ int main(int argc, char **argv)
     test_xdigit();
     test_urc_recv_split();
     test_prompt_send_step();
+    test_at_command_queue();
 
     if (g_test_list_only)
         return 0;
