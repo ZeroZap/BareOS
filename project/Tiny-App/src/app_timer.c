@@ -14,9 +14,8 @@
 #include "stimer.h"
 #include "rtimer.h"
 #include "xy_log.h"
+#include "xy_tick.h"
 #include "tiny_cmd.h"
-
-extern volatile unsigned int g_sys_tick_ms;
 
 /* ── ctimer (2 s callback) ────────────────────────────────────────────── */
 
@@ -25,7 +24,7 @@ static struct ctimer s_ct;
 static void on_ctimer(void *p)
 {
     (void)p;
-    xy_log_i("[ctimer] 2s fired @ %u ms", g_sys_tick_ms);
+    xy_log_i("[ctimer] 2s fired @ %u ms", xy_tick_now_ms());
     ctimer_reset(&s_ct);   /* re-arm for another 2 s */
 }
 
@@ -37,7 +36,7 @@ static void on_rtimer(struct rtimer *t, void *p)
 {
     (void)p;
     xy_log_d("[rtimer] 500ms fired @ %u ms  tick=%u",
-             g_sys_tick_ms, (unsigned int)rtimer_now());
+             xy_tick_now_ms(), (unsigned int)rtimer_now());
     rtimer_set(t, rtimer_now() + RTIMER_SECOND / 2, on_rtimer, NULL);
 }
 
@@ -63,10 +62,10 @@ PROCESS_THREAD(timer_process, ev, data)
         etimer_set(&s_et, 1000u);
         PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&s_et));
 
-        xy_log_d("[etimer] 1s tick @ %u ms", g_sys_tick_ms);
+        xy_log_d("[etimer] 1s tick @ %u ms", xy_tick_now_ms());
 
         if (stimer_expired(&s_st)) {
-            xy_log_i("[stimer] 10s elapsed @ %u ms", g_sys_tick_ms);
+            xy_log_i("[stimer] 10s elapsed @ %u ms", xy_tick_now_ms());
             stimer_reset(&s_st);
         }
     }
@@ -79,7 +78,9 @@ PROCESS_THREAD(timer_process, ev, data)
 static int cmd_timers(tiny_cmd_t *sh, int argc, char *argv[])
 {
     (void)argc; (void)argv;
-    tiny_cmd_printf(sh, "tick_ms   = %u\r\n", g_sys_tick_ms);
+    tiny_cmd_printf(sh, "tick      = %u\r\n", (unsigned int)xy_tick_now());
+    tiny_cmd_printf(sh, "tick_hz   = %u\r\n", (unsigned int)XY_TICK_HZ);
+    tiny_cmd_printf(sh, "tick_ms   = %u\r\n", xy_tick_now_ms());
     tiny_cmd_printf(sh, "rtimer    = %u ticks (%u us)\r\n",
                     (unsigned int)rtimer_now(),
                     (unsigned int)(rtimer_now() / (RTIMER_SECOND / 1000000UL)));

@@ -33,11 +33,20 @@ def make_cmd(target: str | None = None, gcc_path: str | None = None) -> list[str
 
 
 def plb_make_cmd(target: str | None = None,
-                 gcc_path: str | None = None,
-                 hmac_key: Path | None = None) -> list[str]:
+                  gcc_path: str | None = None,
+                  hmac_key: Path | None = None,
+                  security_counter: int | None = None,
+                  image_version: int | None = None,
+                  at_selftest: bool = False) -> list[str]:
     cmd = make_cmd(target, gcc_path)
     if hmac_key is not None:
         cmd.append(f"SECBOOT_HMAC_KEY={hmac_key}")
+    if security_counter is not None:
+        cmd.append(f"SECBOOT_SECURITY_COUNTER={security_counter}")
+    if image_version is not None:
+        cmd.append(f"SECBOOT_IMAGE_VERSION={image_version}")
+    if at_selftest:
+        cmd.append("AT_SELFTEST=y")
     return cmd
 
 
@@ -54,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retries", type=int, default=10)
     parser.add_argument("--hmac-key", type=Path, default=DEV_HMAC_KEY,
                         help="development HMAC key for PLB app package")
+    parser.add_argument("--security-counter", type=int, default=1,
+                        help="package anti-rollback counter, must exceed the device counter")
+    parser.add_argument("--image-version", type=int, default=1)
+    parser.add_argument("--at-selftest", action="store_true",
+                        help="build PLB app with the UART5 AT self-test enabled")
     parser.add_argument("--capture-log", help="optional UART4 log port to capture after flashing")
     parser.add_argument("--log-seconds", type=float, default=5.0)
     parser.add_argument("--dry-run", action="store_true", help="print commands without executing")
@@ -74,7 +88,9 @@ def main() -> int:
             run(make_cmd("clean", args.gcc_path), PLB_MAKE_DIR, dry_run=args.dry_run)
         if not args.dry_run and not args.hmac_key.exists():
             raise FileNotFoundError(args.hmac_key)
-        run(plb_make_cmd("inspect-package", args.gcc_path, args.hmac_key),
+        run(plb_make_cmd("inspect-package", args.gcc_path, args.hmac_key,
+                         args.security_counter, args.image_version,
+                         args.at_selftest),
             PLB_MAKE_DIR,
             dry_run=args.dry_run)
 

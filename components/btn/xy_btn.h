@@ -25,7 +25,7 @@
  *
  *   // Main loop:
  *   while (1) {
- *       xy_btn_process(&g_btn_sos, g_sys_tick_ms);
+ *       xy_btn_process(&g_btn_sos, xy_tick_now_ms());
  *   }
  *
  * ── Multi-button convenience ──────────────────────────────────────────
@@ -34,7 +34,7 @@
  *   xy_btn_register(&g_btn_cancel);
  *
  *   while (1) {
- *       xy_btn_process_all(g_sys_tick_ms);
+ *       xy_btn_process_all(xy_tick_now_ms());
  *   }
  *
  * ── Events ────────────────────────────────────────────────────────────
@@ -183,7 +183,7 @@ void xy_btn_set_config(xy_btn_t *btn, const xy_btn_config_t *cfg);
  * Process one button.  Call each main-loop iteration.
  *
  * @param btn     The button to process.
- * @param now_ms  Current system time in milliseconds (e.g. g_sys_tick_ms).
+ * @param now_ms  Current system time in milliseconds (e.g. xy_tick_now_ms()).
  */
 void xy_btn_process(xy_btn_t *btn, uint32_t now_ms);
 
@@ -209,7 +209,7 @@ void xy_btn_register(xy_btn_t *btn);
 
 /**
  * Process all registered buttons in one call.
- * @param now_ms  Current system time (e.g. g_sys_tick_ms).
+ * @param now_ms  Current system time in milliseconds (e.g. xy_tick_now_ms()).
  */
 void xy_btn_process_all(uint32_t now_ms);
 

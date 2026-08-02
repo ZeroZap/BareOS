@@ -46,8 +46,8 @@
  *   xy_flog_init(0x100000, 256*4096, 4096,
  *                nor_read_cb, nor_write_cb, nor_erase_cb);
  *
- *   xy_flog_write(XY_VLOG_INFO, buf, len, g_sys_tick_ms);
- *   xy_flog_printf(XY_VLOG_ERROR, g_sys_tick_ms, "GNSS fix lost at %u", lat);
+ *   xy_flog_write(XY_VLOG_INFO, buf, len, xy_tick_now_ms());
+ *   xy_flog_printf(XY_VLOG_ERROR, xy_tick_now_ms(), "GNSS fix lost at %u", lat);
  *
  *   xy_flog_foreach(my_print_cb, NULL);
  */
@@ -133,7 +133,7 @@ void xy_flog_init(uint32_t      base_addr,
  * @param type         Entry type (XY_VLOG_INFO, XY_VLOG_ERROR, …).
  * @param payload      Payload bytes; may be NULL when payload_len == 0.
  * @param payload_len  Bytes of payload (clamped to XY_FLOG_MAX_PAYLOAD).
- * @param timestamp_ms Caller-supplied timestamp (typically g_sys_tick_ms).
+ * @param timestamp_ms Caller-supplied timestamp (typically xy_tick_now_ms()).
  * @return 0 on success, -1 if not initialised or flash write failed.
  */
 int xy_flog_write(xy_vlog_type_t type,

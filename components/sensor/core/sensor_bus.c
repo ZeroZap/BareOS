@@ -6,6 +6,7 @@
  */
 
 #include "xy_sensor.h"
+#include "xy_hal.h"
 #include "xy_log.h"
 #include "xy_string.h"
 

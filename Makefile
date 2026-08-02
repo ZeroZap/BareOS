@@ -22,13 +22,17 @@ define CLANGD_FLAGS
 -Icomponents/event
 -Icomponents/gnss
 -Icomponents/gui
+-Icomponents/hal
+-Icomponents/hal/N32L40x
 -Icomponents/io
 -Icomponents/json
+-Icomponents/json/corejson
 -Icomponents/log
 -Icomponents/mem
 -Icomponents/modbus
 -Icomponents/norflash
 -Icomponents/pt
+-Icomponents/pm
 -Icomponents/sensor/core
 -Icomponents/storage/eeprom
 -Icomponents/storage/evtlog
@@ -38,6 +42,7 @@ define CLANGD_FLAGS
 -Icomponents/storage/vlog
 -Icomponents/sys
 -Icomponents/timer
+-Icomponents/tick
 -Icomponents/tlv
 -Icomponents/uwb
 -Icomponents/wifi

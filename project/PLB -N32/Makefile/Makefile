@@ -20,6 +20,9 @@ OPT = -O0
 #######################################
 BUILD_DIR = build
 SECBOOT_HMAC_KEY ?= ../../../tool/xy_secboot/dev_hmac_key.txt
+SECBOOT_IMAGE_VERSION ?= 1
+SECBOOT_SECURITY_COUNTER ?= 1
+SECBOOT_PACKAGE ?= $(BUILD_DIR)/$(TARGET).sbp
 
 #######################################
 # HAL path
@@ -44,6 +47,14 @@ DEFS += -DAT_WORK_POOL_COUNT=8
 DEFS += -DAT_WORK_ITEM_DATA_SIZE=256
 DEFS += -DPLB_N32_APP_IMAGE=1
 DEFS += -DPLB_N32_ENABLE_TICKLESS=1
+PM_LOG_INTERVAL_MS ?= 60000
+DEFS += -DPLB_N32_PM_LOG_INTERVAL_MS=$(PM_LOG_INTERVAL_MS)
+ifeq ($(PM_LOCK_TEST), y)
+DEFS += -DPLB_N32_ENABLE_PM_LOCK_TEST=1
+endif
+ifeq ($(AT_SELFTEST), y)
+DEFS += -DPLB_N32_ENABLE_AT_SELFTEST=1
+endif
 DEFS += -DVECT_TAB_OFFSET=0x7800
 ifeq ($(NO_CONFIRM), y)
 DEFS += -DPLB_N32_SECBOOT_CONFIRM_LAB_DIRECT_WRITE=0
@@ -193,10 +204,10 @@ LDSCRIPT =PLB.ld
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
 
 package: all
-	python ../../../tool/xy_secboot/xy_secboot.py pack --input $(BUILD_DIR)/$(TARGET).bin --output $(BUILD_DIR)/$(TARGET).sbp --product-id 0x00010001 --image-addr 0x08007800 --entry-addr 0x08007800 --image-version 1 --security-counter 1 --hmac-key $(SECBOOT_HMAC_KEY)
+	python ../../../tool/xy_secboot/xy_secboot.py pack --input $(BUILD_DIR)/$(TARGET).bin --output $(SECBOOT_PACKAGE) --product-id 0x00010001 --image-addr 0x08007800 --entry-addr 0x08007800 --image-version $(SECBOOT_IMAGE_VERSION) --security-counter $(SECBOOT_SECURITY_COUNTER) --hmac-key $(SECBOOT_HMAC_KEY)
 
 inspect-package: package
-	python ../../../tool/xy_secboot/xy_secboot.py inspect $(BUILD_DIR)/$(TARGET).sbp
+	python ../../../tool/xy_secboot/xy_secboot.py inspect $(SECBOOT_PACKAGE)
 
 # list of objects
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))

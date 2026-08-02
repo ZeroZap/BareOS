@@ -121,6 +121,9 @@ int xy_event_dispatch(void);
  */
 uint32_t xy_event_pending(void);
 
+/** PM sleep-check adapter: returns true when the event queue is empty. */
+bool xy_event_pm_can_sleep(void *arg);
+
 /**
  * Flush all pending events without dispatching them.
  */

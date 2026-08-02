@@ -952,8 +952,26 @@ void at_obj_destroy(at_obj_t *obj)
  */
 bool at_obj_busy(at_obj_t *at)
 {
-    return !list_empty(&obj_map(at)->hlist) || !list_empty(&obj_map(at)->llist) 
-        || obj_map(at)->urc_cnt != 0;
+    at_info_t *ai;
+
+    if (at == NULL) {
+        return false;
+    }
+
+    ai = obj_map(at);
+    return ai->cursor != NULL ||
+           !list_empty(&ai->hlist) ||
+           !list_empty(&ai->llist) ||
+           ai->urc_cnt != 0 ||
+#if AT_RAW_TRANSPARENT_EN
+           ai->raw_trans ||
+#endif
+           false;
+}
+
+bool at_obj_pm_can_sleep(void *arg)
+{
+    return !at_obj_busy((at_obj_t *)arg);
 }
 
 /**

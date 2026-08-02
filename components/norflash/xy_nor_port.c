@@ -52,6 +52,6 @@ xy_nor_status_t xy_nor_hw_command(void *hw_handle, uint8_t cmd,
 __attribute__((weak))
 void xy_nor_hw_delay_ms(uint32_t ms)
 {
-    /* BSP override: call bsp_delay_ms() or spin on g_sys_tick_ms */
+    /* BSP override: call bsp_delay_ms() or spin on xy_tick_now_ms(). */
     (void)ms;
 }

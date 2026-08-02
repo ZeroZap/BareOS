@@ -7,13 +7,12 @@
 extern "C" {
 #endif
 
-/* Shared tick counter — incremented by pc_tick_update(). */
-extern volatile unsigned int g_sys_tick_ms;
+/* Shared BareOS tick counter, updated by pc_tick_update(). */
 
 /* Call once at startup. */
 void pc_bsp_init(void);
 
-/* Call each main-loop iteration to advance g_sys_tick_ms. */
+/* Call each main-loop iteration to advance the BareOS tick. */
 void pc_tick_update(void);
 
 /* ── Simulated flash (for xy_flog tests) ─────────────────────────────

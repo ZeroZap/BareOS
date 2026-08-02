@@ -4,11 +4,11 @@
  */
 
 #include "stimer.h"
-#include "etimer.h"   /* for etimer_now_ms() */
+#include "xy_tick.h"
 
 uint32_t stimer_now_s(void)
 {
-    return etimer_now_ms() / 1000u;
+    return xy_tick_now_s();
 }
 
 void stimer_set(struct stimer *st, uint32_t interval_s)

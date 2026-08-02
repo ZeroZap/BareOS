@@ -111,7 +111,7 @@ void xy_vlog_init(uint8_t *buf, uint32_t size);
  * @param type         Entry type (xy_vlog_type_t).
  * @param payload      Payload bytes (may be NULL if payload_len == 0).
  * @param payload_len  Number of payload bytes (clamped to XY_VLOG_MAX_PAYLOAD).
- * @param timestamp_ms Caller-supplied timestamp (typically g_sys_tick_ms).
+ * @param timestamp_ms Caller-supplied timestamp (typically xy_tick_now_ms()).
  * @return 0 on success, -1 if not initialised or entry too large.
  */
 int xy_vlog_write(xy_vlog_type_t type,

@@ -7,8 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* Required by components/at/src/at_port.c → at_get_ms() */
-volatile unsigned int g_sys_tick_ms = 0;
+#include "xy_tick.h"
 
 /* Required by components/log/xy_log.c */
 void xy_log_char(char ch) { (void)fputc(ch, stderr); }

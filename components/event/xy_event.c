@@ -125,6 +125,12 @@ uint32_t xy_event_pending(void)
     return s_head - s_tail;
 }
 
+bool xy_event_pm_can_sleep(void *arg)
+{
+    (void)arg;
+    return xy_event_pending() == 0u;
+}
+
 void xy_event_flush(void)
 {
     s_tail = s_head;

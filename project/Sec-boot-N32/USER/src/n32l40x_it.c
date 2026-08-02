@@ -6,10 +6,10 @@
 #include "n32l40x_it.h"
 #include "n32l40x_cfg.h"
 #include "n32l40x_iwdg.h"
+#include "xy_tick.h"
 
 extern __IO uint32_t mwTick;
 extern void n32_debug_log_write(const char *str);
-volatile unsigned int g_sys_tick_ms;
 
 void NMI_Handler(void)
 {
@@ -58,7 +58,7 @@ void DebugMon_Handler(void)
 void SysTick_Handler(void)
 {
     mwTick++;
-    g_sys_tick_ms++;
+    xy_tick_advance(1u);
 }
 
 void UART5_IRQHandler(void)

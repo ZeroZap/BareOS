@@ -5,7 +5,7 @@
  * Main loop pattern mirrors the target firmware:
  *
  *   while (1) {
- *       pc_tick_update();      // advance g_sys_tick_ms from host clock
+ *       pc_tick_update();      // advance BareOS tick from host clock
  *       pc_uart_poll();        // drain stdin → rx callback → process_post
  *       ctimer_run();          // fire expired callback timers
  *       process_run();         // run etimer_run + dispatch events to tasks
@@ -25,6 +25,8 @@
 #include "xy_log.h"
 #include "ctimer.h"
 #include "process.h"
+#include "xy_pm.h"
+#include "xy_event.h"
 
 /* ── UART rx callback ─────────────────────────────────────────────────
  * Called from pc_uart_poll() — ONE byte per main-loop iteration.
@@ -62,11 +64,13 @@ int main(void)
 
     /* ── Main loop ─────────────────────────────────────────────────── */
     while (1) {
-        pc_tick_update();   /* keep g_sys_tick_ms current                */
+        pc_tick_update();   /* keep the BareOS tick current              */
         pc_uart_poll();     /* read one stdin byte → on_uart_rx          */
         pc_rtimer_poll();   /* fire rtimer callbacks when deadline hits  */
         ctimer_run();       /* advance callback timers                   */
         process_run();      /* etimer expiry + event dispatch to tasks   */
+        xy_event_dispatch();
+        xy_pm_tickless_idle();
     }
 
     return 0;

@@ -285,6 +285,9 @@ void at_obj_destroy(at_obj_t *at);
 
 bool at_obj_busy(at_obj_t *at);
 
+/** PM sleep-check adapter: returns true when the AT object has no active work. */
+bool at_obj_pm_can_sleep(void *arg);
+
 void at_obj_set_user_data(at_obj_t *at, void *user_data);
 
 void *at_obj_get_user_data(at_obj_t *at);
@@ -432,4 +435,3 @@ int at_prompt_send_step(at_env_t *env,
                                 (env)->finish((env), AT_RESP_ERROR); } while (0)
 
 #endif //End of _AT_CHAT_H_
-

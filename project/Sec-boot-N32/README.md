@@ -2,6 +2,8 @@
 
 `Sec-boot-N32` is a copy of the PLB-N32 board project redefined as the first N32L406 secure boot development target.
 
+Current development version: `SecBoot-N32 V1.1.3-dev`.
+
 See `SECBOOT_GUIDE.md` for the end-to-end build, package, flash, GUI, and troubleshooting guide.
 
 ## V1 Scope
@@ -19,10 +21,12 @@ UART5 is used as the secboot development transport.
 
 | Signal | Pin |
 |---|---|
-| UART5 TX | PB8 |
-| UART5 RX | PB9 |
+| UART5 TX | PB4 |
+| UART5 RX | PB5 |
 
 UART4 remains the debug log UART.
+
+The currently verified PC mapping is UART4 log on `COM16` and UART5 update on `COM24`, both at `115200 8N1`. RTS/DTR reset control is not implemented; use `--recover-ms` and press the board reset button during the recovery preamble.
 
 ## Flash Layout
 
@@ -90,7 +94,7 @@ Example debug command:
 
 ```bash
 python tool/xy_secboot/xy_secboot.py flash \
-  --port COM12 \
+  --port COM24 \
   --baud 115200 \
   --package build/app.sbp \
   --payload 256 \
@@ -105,7 +109,7 @@ For manual recovery after a valid App is already installed, run the host command
 
 ```bash
 python tool/xy_secboot/xy_secboot.py flash \
-  --port COM12 \
+  --port COM24 \
   --baud 115200 \
   --package build/app.sbp \
   --payload 256 \

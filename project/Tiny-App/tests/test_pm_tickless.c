@@ -15,6 +15,10 @@ static uint32_t s_hook_calls;
 static uint16_t s_lock_count[XY_HAL_PM_LOCK_COUNT];
 static xy_hal_power_mode_t s_entered_mode;
 static uint32_t s_power_enter_calls;
+static uint32_t s_lptimer_stop_calls;
+static bool s_reject_during_lptimer_start;
+static bool s_shorten_timeout_during_lptimer_start;
+static uint32_t s_reported_wake_sources;
 
 static int check(int condition, const char *name)
 {
@@ -64,12 +68,19 @@ int xy_hal_lptimer_start(void *timer, uint32_t timeout_ms,
     (void)user;
     s_started_ms = timeout_ms;
     s_now_ms = 0u;
+    if (s_reject_during_lptimer_start) {
+        s_sleep_allowed = false;
+    }
+    if (s_shorten_timeout_during_lptimer_start) {
+        s_timeout_ticks = xy_tick_from_ms(20u);
+    }
     return XY_HAL_OK;
 }
 
 int xy_hal_lptimer_stop(void *timer)
 {
     (void)timer;
+    s_lptimer_stop_calls++;
     return XY_HAL_OK;
 }
 
@@ -87,6 +98,7 @@ int xy_hal_power_enter(xy_hal_power_mode_t mode, uint32_t wake_sources,
     s_entered_mode = mode;
     s_power_enter_calls++;
     s_now_ms += s_wake_after_ms;
+    xy_pm_report_wake_sources(s_reported_wake_sources);
     return XY_HAL_OK;
 }
 
@@ -160,6 +172,10 @@ static void reset_fixture(void)
     s_hook_calls = 0u;
     s_entered_mode = XY_HAL_POWER_RUN;
     s_power_enter_calls = 0u;
+    s_lptimer_stop_calls = 0u;
+    s_reject_during_lptimer_start = false;
+    s_shorten_timeout_during_lptimer_start = false;
+    s_reported_wake_sources = 0u;
     for (uint32_t i = 0u; i < (uint32_t)XY_HAL_PM_LOCK_COUNT; i++) {
         s_lock_count[i] = 0u;
     }
@@ -185,6 +201,12 @@ static int test_full_sleep(void)
                     stats.abort_count == 0u, "full sleep stats counts");
     failed += check(stats.last_planned_ms == 500u && stats.last_elapsed_ms == 500u,
                     "full sleep stats durations");
+    failed += check(stats.total_deep_sleep_ms == 500u &&
+                    stats.max_deep_sleep_ms == 500u && stats.early_wake_count == 0u,
+                    "full sleep residency stats");
+    failed += check(stats.lptimer_wake_count == 1u &&
+                    stats.last_wake_sources == XY_HAL_WAKE_LPTIMER,
+                    "full sleep classified as LPTIM wake");
     return failed;
 }
 
@@ -203,6 +225,80 @@ static int test_early_wakeup(void)
     xy_pm_get_stats(&stats);
     failed += check(stats.last_planned_ms == 800u && stats.last_elapsed_ms == 300u,
                     "early wake stats durations");
+    failed += check(stats.total_deep_sleep_ms == 300u &&
+                    stats.max_deep_sleep_ms == 300u && stats.early_wake_count == 1u,
+                    "early wake residency stats");
+    return failed;
+}
+
+static int test_shallow_without_lptimer(void)
+{
+    xy_pm_config_t config;
+    xy_pm_stats_t stats;
+    int failed = 0;
+
+    reset_fixture();
+    config.lptimer = NULL;
+    config.deepest_mode = XY_HAL_POWER_SLEEP;
+    config.wake_sources = XY_HAL_WAKE_UART;
+    config.min_sleep_ms = 0u;
+    config.max_sleep_ms = 0u;
+    xy_pm_init(&config);
+    xy_pm_register_sleep_check(sleep_check, NULL);
+
+    failed += check(!xy_pm_is_tickless_available(),
+                    "shallow-only config has no tickless timer");
+    failed += check(xy_pm_tickless_idle() == 1,
+                    "shallow sleep works without LPTIM");
+    failed += check(s_entered_mode == XY_HAL_POWER_SLEEP &&
+                    s_power_enter_calls == 1u && s_started_ms == 0u,
+                    "shallow-only config enters SLEEP directly");
+    xy_pm_get_stats(&stats);
+    failed += check(stats.shallow_sleep_count == 1u && stats.sleep_count == 0u &&
+                    stats.abort_count == 0u,
+                    "shallow-only stats");
+    return failed;
+}
+
+static int test_wake_source_stats(void)
+{
+    xy_pm_stats_t stats;
+    int failed = 0;
+
+    reset_fixture();
+    xy_pm_report_wake_sources(XY_HAL_WAKE_UART);
+    s_timeout_ticks = xy_tick_from_ms(500u);
+    s_wake_after_ms = 200u;
+    s_reported_wake_sources = XY_HAL_WAKE_UART | XY_HAL_WAKE_GPIO |
+                              XY_HAL_WAKE_RTC | XY_HAL_WAKE_WDG;
+
+    failed += check(xy_pm_tickless_idle() == 1, "multi-source wake succeeds");
+    xy_pm_get_stats(&stats);
+    failed += check(stats.uart_wake_count == 1u && stats.gpio_wake_count == 1u &&
+                    stats.lptimer_wake_count == 0u && stats.rtc_wake_count == 1u &&
+                    stats.wdg_wake_count == 1u && stats.unknown_wake_count == 0u,
+                    "reported wake sources counted independently");
+    failed += check(stats.last_wake_sources ==
+                    (XY_HAL_WAKE_UART | XY_HAL_WAKE_GPIO |
+                     XY_HAL_WAKE_RTC | XY_HAL_WAKE_WDG),
+                    "last wake source mask retained");
+
+    s_wake_after_ms = 500u;
+    s_reported_wake_sources = 0u;
+    failed += check(xy_pm_tickless_idle() == 1, "LPTIM wake succeeds");
+    xy_pm_get_stats(&stats);
+    failed += check(stats.uart_wake_count == 1u && stats.gpio_wake_count == 1u &&
+                    stats.lptimer_wake_count == 1u &&
+                    stats.last_wake_sources == XY_HAL_WAKE_LPTIMER,
+                    "LPTIM wake counted without changing prior counts");
+
+    xy_pm_reset_stats();
+    xy_pm_get_stats(&stats);
+    failed += check(stats.uart_wake_count == 0u && stats.gpio_wake_count == 0u &&
+                    stats.lptimer_wake_count == 0u && stats.rtc_wake_count == 0u &&
+                    stats.wdg_wake_count == 0u && stats.unknown_wake_count == 0u &&
+                    stats.last_wake_sources == 0u,
+                    "wake source stats reset");
     return failed;
 }
 
@@ -243,6 +339,45 @@ static int test_unregister(void)
                     "unregistered timeout absent");
     failed += check(xy_pm_unregister_timeout(next_timeout, NULL) == XY_HAL_INVALID_PARAM,
                     "duplicate unregister rejected");
+    return failed;
+}
+
+static int test_work_arrives_during_lptimer_start(void)
+{
+    xy_pm_stats_t stats;
+    int failed = 0;
+
+    reset_fixture();
+    s_timeout_ticks = xy_tick_from_ms(500u);
+    s_reject_during_lptimer_start = true;
+
+    failed += check(xy_pm_tickless_idle() == 0,
+                    "work arriving during LPTIM setup rejects STOP");
+    failed += check(s_started_ms == 500u && s_lptimer_stop_calls == 1u,
+                    "rejected STOP cancels programmed LPTIM");
+    failed += check(s_power_enter_calls == 0u && xy_tick_now() == 0u,
+                    "rejected STOP does not enter power mode or advance tick");
+    failed += check(s_irq_state == 0u, "setup race restores irq state");
+    xy_pm_get_stats(&stats);
+    failed += check(stats.abort_count == 1u && stats.sleep_count == 0u,
+                    "setup race stats");
+    return failed;
+}
+
+static int test_earlier_deadline_during_lptimer_start(void)
+{
+    int failed = 0;
+
+    reset_fixture();
+    s_timeout_ticks = xy_tick_from_ms(500u);
+    s_shorten_timeout_during_lptimer_start = true;
+
+    failed += check(xy_pm_tickless_idle() == 0,
+                    "earlier deadline during LPTIM setup rejects STOP");
+    failed += check(s_started_ms == 500u && s_lptimer_stop_calls == 1u,
+                    "earlier deadline cancels programmed LPTIM");
+    failed += check(s_power_enter_calls == 0u && xy_tick_now() == 0u,
+                    "earlier deadline does not oversleep");
     return failed;
 }
 
@@ -291,6 +426,8 @@ static int test_stop_lock(void)
     failed += check(stats.abort_count == 0u && stats.sleep_count == 1u &&
                     stats.shallow_sleep_count == 2u,
                     "STOP lock stats");
+    failed += check(stats.unknown_wake_count == 2u,
+                    "unreported shallow wakes counted as unknown");
     return failed;
 }
 
@@ -300,8 +437,12 @@ int main(void)
 
     failed += test_full_sleep();
     failed += test_early_wakeup();
+    failed += test_shallow_without_lptimer();
+    failed += test_wake_source_stats();
     failed += test_sleep_rejected();
     failed += test_unregister();
+    failed += test_work_arrives_during_lptimer_start();
+    failed += test_earlier_deadline_during_lptimer_start();
     failed += test_stop_lock();
 
     if (failed == 0) {

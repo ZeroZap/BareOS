@@ -42,6 +42,16 @@ typedef struct {
     uint32_t abort_count;
     uint32_t last_planned_ms;
     uint32_t last_elapsed_ms;
+    uint32_t total_deep_sleep_ms;
+    uint32_t max_deep_sleep_ms;
+    uint32_t early_wake_count;
+    uint32_t uart_wake_count;
+    uint32_t gpio_wake_count;
+    uint32_t lptimer_wake_count;
+    uint32_t rtc_wake_count;
+    uint32_t wdg_wake_count;
+    uint32_t unknown_wake_count;
+    uint32_t last_wake_sources;
 } xy_pm_stats_t;
 
 void xy_pm_init(const xy_pm_config_t *config);
@@ -61,6 +71,9 @@ uint16_t xy_pm_get_lock_count(xy_hal_pm_lock_t lock);
 bool xy_pm_can_sleep(void);
 xy_tick_t xy_pm_next_timeout_ticks(void);
 int xy_pm_tickless_idle(void);
+
+/* ISR-safe. Reports sources asserted while PM is entering or leaving sleep. */
+void xy_pm_report_wake_sources(uint32_t wake_sources);
 
 bool xy_pm_is_initialized(void);
 bool xy_pm_is_tickless_available(void);

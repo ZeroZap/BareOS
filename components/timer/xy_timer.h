@@ -1,6 +1,12 @@
 #ifndef _XY_TIMER_H_
 #define _XY_TIMER_H_
 
+#include "xy_typedef.h"
+
+#ifndef reentrant
+#define reentrant
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,7 +29,7 @@ typedef void *xy_timer_ref;
  *        - xy_timer_change_reload()
  *        - xy_timer_change_func()
  */
-#if (PLATFORM == PLATFORM_C51)
+#if defined(PLATFORM) && defined(PLATFORM_C51) && (PLATFORM == PLATFORM_C51)
 typedef void (*timer_proc)(xy_timer_ref xdata timer_handler,
                            void xdata *params) reentrant;
 #else
@@ -69,6 +75,12 @@ void xy_timer_set_tick(xy_uint32_t tick);
  * @note 调用上下文：任意
  */
 xy_uint32_t xy_timer_get_nexttick(void);
+
+/** PM timeout adapter for xy_pm_register_timeout(). */
+xy_uint32_t xy_timer_pm_timeout_ticks(void *arg);
+
+/** PM wake hook adapter: runs expired xy_timer callbacks after tick compensation. */
+void xy_timer_pm_wake_hook(xy_uint32_t elapsed_ticks, void *arg);
 
 /**
  * @brief 创建定时器

@@ -10,6 +10,7 @@
 #include "n32l40x_iwdg.h"
 #include "xy_tick.h"
 #include "xy_hal.h"
+#include "xy_pm.h"
 #include "usb_istr.h"
 #include "usb_int.h"
 /* NTFx CODE END */
@@ -117,6 +118,7 @@ void SysTick_Handler(void)
 
 void LPTIM_WKUP_IRQHandler(void)
 {
+    xy_pm_report_wake_sources(XY_HAL_WAKE_LPTIMER);
     xy_hal_lptimer_irq_handler(LPTIM);
 }
 /* NTFx CODE START(EXTI1_IRQHandler)*/
@@ -130,6 +132,7 @@ void EXTI1_IRQHandler(void)
 /* NTFx CODE START */
     if (EXTI_GetITStatus(EXTI_LINE1))
     {
+        xy_pm_report_wake_sources(XY_HAL_WAKE_GPIO);
         /*clear IT flag*/
         EXTI_ClrITPendBit(EXTI_LINE1);
 /* NTFx CODE END */
@@ -139,6 +142,18 @@ void EXTI1_IRQHandler(void)
 /* NTFx CODE START */
 }
 /* NTFx CODE END(EXTI1_IRQHandler)*/
+
+void EXTI9_5_IRQHandler(void)
+{
+    if (EXTI_GetITStatus(EXTI_LINE5)) {
+        /* One edge opens the receive window. Mask further UART data edges until
+         * the main loop closes the window and re-arms STOP2 wakeup. */
+        EXTI->IMASK &= ~EXTI_LINE5;
+        g_n32_uart5_io_wake_count++;
+        xy_pm_report_wake_sources(XY_HAL_WAKE_GPIO);
+        EXTI_ClrITPendBit(EXTI_LINE5);
+    }
+}
 
 /* NTFx CODE START(DMA_Channel1_IRQHandler)*/
 /**
@@ -200,6 +215,7 @@ void USART1_IRQHandler(void)
 /* NTFx CODE END */
 
 /* NTFx CODE START */
+    xy_pm_report_wake_sources(XY_HAL_WAKE_UART);
     if (USART_GetIntStatus(USART1, USART_INT_IDLEF))
     {
         /*clear IT flag*/
@@ -234,6 +250,7 @@ void USART2_IRQHandler(void)
 /* NTFx CODE END */
 
 /* NTFx CODE START */
+    xy_pm_report_wake_sources(XY_HAL_WAKE_UART);
     if (USART_GetIntStatus(USART2, USART_INT_IDLEF))
     {
         /*clear IT flag*/
@@ -289,6 +306,7 @@ void UART4_IRQHandler(void)
 /* NTFx CODE END */
 
 /* NTFx CODE START */
+    xy_pm_report_wake_sources(XY_HAL_WAKE_UART);
     if (USART_GetIntStatus(UART4, USART_INT_IDLEF))
     {
         /*clear IT flag*/
@@ -316,5 +334,6 @@ void UART4_IRQHandler(void)
 
 void UART5_IRQHandler(void)
 {
+    xy_pm_report_wake_sources(XY_HAL_WAKE_UART);
     n32_uart5_secboot_isr();
 }

@@ -3,8 +3,8 @@
  * @brief Seconds-granularity polling timer.
  *
  * stimer is designed for long-duration timeouts where millisecond precision
- * is not needed (minutes, hours).  It uses the same g_sys_tick_ms source
- * as etimer but expresses time in whole seconds to avoid 32-bit overflow
+ * is not needed (minutes, hours).  It uses the same BareOS tick source as
+ * etimer but expresses time in whole seconds to avoid 32-bit overflow
  * when tracking multi-hour intervals.
  *
  *   stimer_set(&t, 300);               // 5-minute timeout
@@ -65,7 +65,7 @@ void stimer_restart(struct stimer *st);
 
 /**
  * Seconds since boot — provided by the platform.
- * Default implementation derives from etimer_now_ms() / 1000.
+ * Default implementation derives from xy_tick_now_s().
  */
 uint32_t stimer_now_s(void);
 

@@ -8,7 +8,7 @@ make download-jlink JLINK_PATH="D:\\Program Files (x86)\\SEGGER\\JLink_V632g\\"
 以下命令假设以方法2/3定义GCC_PATH/JLINK_PATH。
 一、编译
       make :编译,带debug信息；
-      make release=1:编译,不带debug信息；
+      make release=y:编译,不带debug信息；
       
  二、DAP下载
       make flash:使用DAP/pyOCD下载；

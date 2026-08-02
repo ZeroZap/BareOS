@@ -24,6 +24,44 @@ static uint8_t s_timeout_count;
 static uint8_t s_wake_hook_count;
 static bool s_initialized;
 static xy_pm_stats_t s_stats;
+static volatile uint32_t s_pending_wake_sources;
+static volatile bool s_collecting_wake_sources;
+
+static void pm_begin_wake_collection(void)
+{
+    s_pending_wake_sources = 0u;
+    s_collecting_wake_sources = true;
+}
+
+static void pm_finish_wake_collection(void)
+{
+    uint32_t key = xy_hal_irq_save();
+    uint32_t wake_sources = s_pending_wake_sources;
+
+    s_collecting_wake_sources = false;
+    s_pending_wake_sources = 0u;
+    xy_hal_irq_restore(key);
+
+    s_stats.last_wake_sources = wake_sources;
+    if ((wake_sources & XY_HAL_WAKE_UART) != 0u) {
+        s_stats.uart_wake_count++;
+    }
+    if ((wake_sources & XY_HAL_WAKE_GPIO) != 0u) {
+        s_stats.gpio_wake_count++;
+    }
+    if ((wake_sources & XY_HAL_WAKE_LPTIMER) != 0u) {
+        s_stats.lptimer_wake_count++;
+    }
+    if ((wake_sources & XY_HAL_WAKE_RTC) != 0u) {
+        s_stats.rtc_wake_count++;
+    }
+    if ((wake_sources & XY_HAL_WAKE_WDG) != 0u) {
+        s_stats.wdg_wake_count++;
+    }
+    if (wake_sources == 0u) {
+        s_stats.unknown_wake_count++;
+    }
+}
 
 static bool pm_checks_allow_sleep(void)
 {
@@ -58,6 +96,8 @@ void xy_pm_init(const xy_pm_config_t *config)
     s_check_count = 0u;
     s_timeout_count = 0u;
     s_wake_hook_count = 0u;
+    s_pending_wake_sources = 0u;
+    s_collecting_wake_sources = false;
     s_initialized = true;
     xy_pm_reset_stats();
 }
@@ -189,29 +229,37 @@ int xy_pm_tickless_idle(void)
     uint32_t elapsed_ms;
     uint32_t sleep_ms;
     xy_tick_t sleep_ticks;
+    xy_tick_t final_sleep_ticks;
     xy_tick_t elapsed_ticks;
 
     s_stats.idle_calls++;
     s_stats.last_planned_ms = 0u;
     s_stats.last_elapsed_ms = 0u;
 
-    if (!xy_pm_is_tickless_available()) {
-        return pm_abort();
-    }
-
     key = xy_hal_irq_save();
-    if (xy_hal_power_get_allowed_mode() < s_pm.deepest_mode) {
+    if (s_pm.deepest_mode == XY_HAL_POWER_SLEEP ||
+        xy_hal_power_get_allowed_mode() < s_pm.deepest_mode) {
         if (xy_hal_power_get_allowed_mode() >= XY_HAL_POWER_SLEEP &&
-            pm_checks_allow_sleep() &&
-            xy_hal_power_enter(XY_HAL_POWER_SLEEP, s_pm.wake_sources, 0u) == XY_HAL_OK) {
+            pm_checks_allow_sleep()) {
+            pm_begin_wake_collection();
+            if (xy_hal_power_enter(XY_HAL_POWER_SLEEP, s_pm.wake_sources, 0u) != XY_HAL_OK) {
+                s_collecting_wake_sources = false;
+                xy_hal_irq_restore(key);
+                return pm_abort();
+            }
             s_stats.shallow_sleep_count++;
             xy_hal_irq_restore(key);
+            pm_finish_wake_collection();
             return 1;
         }
         xy_hal_irq_restore(key);
         return pm_abort();
     }
     xy_hal_irq_restore(key);
+
+    if (!xy_pm_is_tickless_available()) {
+        return pm_abort();
+    }
 
     sleep_ticks = xy_pm_next_timeout_ticks();
     if (sleep_ticks == 0u) {
@@ -232,19 +280,27 @@ int xy_pm_tickless_idle(void)
     }
     s_stats.last_planned_ms = sleep_ms;
 
-    key = xy_hal_irq_save();
     if (!xy_pm_can_sleep()) {
-        xy_hal_irq_restore(key);
         return pm_abort();
     }
-
     if (xy_hal_lptimer_start(s_pm.lptimer, sleep_ms, NULL, NULL) != XY_HAL_OK) {
-        xy_hal_irq_restore(key);
         return pm_abort();
     }
     start_ms = xy_hal_lptimer_now_ms(s_pm.lptimer);
 
+    key = xy_hal_irq_save();
+    final_sleep_ticks = xy_pm_next_timeout_ticks();
+    if (!xy_pm_can_sleep() || final_sleep_ticks == 0u ||
+        (final_sleep_ticks != XY_PM_TIMEOUT_FOREVER &&
+         xy_tick_to_ms(final_sleep_ticks) < sleep_ms)) {
+        xy_hal_lptimer_stop(s_pm.lptimer);
+        xy_hal_irq_restore(key);
+        return pm_abort();
+    }
+
+    pm_begin_wake_collection();
     if (xy_hal_power_enter(s_pm.deepest_mode, s_pm.wake_sources, sleep_ms) != XY_HAL_OK) {
+        s_collecting_wake_sources = false;
         xy_hal_lptimer_stop(s_pm.lptimer);
         xy_hal_irq_restore(key);
         return pm_abort();
@@ -253,11 +309,23 @@ int xy_pm_tickless_idle(void)
     elapsed_ms = xy_hal_lptimer_now_ms(s_pm.lptimer) - start_ms;
     xy_hal_lptimer_stop(s_pm.lptimer);
 
+    if (elapsed_ms >= sleep_ms) {
+        xy_pm_report_wake_sources(XY_HAL_WAKE_LPTIMER);
+    }
+
     elapsed_ticks = xy_tick_from_ms(elapsed_ms);
     xy_tick_advance(elapsed_ticks);
     xy_hal_irq_restore(key);
+    pm_finish_wake_collection();
 
     s_stats.last_elapsed_ms = elapsed_ms;
+    s_stats.total_deep_sleep_ms += elapsed_ms;
+    if (elapsed_ms > s_stats.max_deep_sleep_ms) {
+        s_stats.max_deep_sleep_ms = elapsed_ms;
+    }
+    if (elapsed_ms < sleep_ms) {
+        s_stats.early_wake_count++;
+    }
     s_stats.sleep_count++;
 
     for (i = 0u; i < s_wake_hook_count; i++) {
@@ -265,6 +333,13 @@ int xy_pm_tickless_idle(void)
     }
 
     return 1;
+}
+
+void xy_pm_report_wake_sources(uint32_t wake_sources)
+{
+    if (s_collecting_wake_sources) {
+        s_pending_wake_sources |= wake_sources;
+    }
 }
 
 bool xy_pm_is_initialized(void)
@@ -281,16 +356,31 @@ bool xy_pm_is_tickless_available(void)
 void xy_pm_get_stats(xy_pm_stats_t *stats)
 {
     if (stats) {
+        uint32_t key = xy_hal_irq_save();
         *stats = s_stats;
+        xy_hal_irq_restore(key);
     }
 }
 
 void xy_pm_reset_stats(void)
 {
+    uint32_t key = xy_hal_irq_save();
+
     s_stats.idle_calls = 0u;
     s_stats.sleep_count = 0u;
     s_stats.shallow_sleep_count = 0u;
     s_stats.abort_count = 0u;
     s_stats.last_planned_ms = 0u;
     s_stats.last_elapsed_ms = 0u;
+    s_stats.total_deep_sleep_ms = 0u;
+    s_stats.max_deep_sleep_ms = 0u;
+    s_stats.early_wake_count = 0u;
+    s_stats.uart_wake_count = 0u;
+    s_stats.gpio_wake_count = 0u;
+    s_stats.lptimer_wake_count = 0u;
+    s_stats.rtc_wake_count = 0u;
+    s_stats.wdg_wake_count = 0u;
+    s_stats.unknown_wake_count = 0u;
+    s_stats.last_wake_sources = 0u;
+    xy_hal_irq_restore(key);
 }

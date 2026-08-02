@@ -202,6 +202,12 @@ bool process_is_running(const struct process *p);
  */
 int process_nevents(void);
 
+/** Returns true if queued events or poll requests need scheduler work. */
+bool process_has_work(void);
+
+/** PM sleep-check adapter: returns true when the scheduler has no pending work. */
+bool process_pm_can_sleep(void *arg);
+
 /**
  * Returns the process currently being dispatched (NULL if called outside
  * a process thread — e.g. from BSP init or ISR).

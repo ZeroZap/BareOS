@@ -2,7 +2,7 @@
 
 本文档描述 `Sec-boot-N32` V1 的开发、构建、打包、刷写和排错流程。
 
-当前版本目标是先跑通 UART5 recovery/download 链路，后续再逐步补齐签名验证、回滚计数、App 跳转和生产级密钥管理。
+当前开发版本为 `SecBoot-N32 V1.1.3-dev`。UART5 recovery/download、开发 HMAC、rollback、受控 confirmed 和 App 跳转已跑通；生产级公钥验证和密钥保护仍待完成。
 
 ## 角色
 
@@ -39,12 +39,21 @@
 |---|---|---|
 | UART4 TX | PB0 | 调试 log 输出 |
 | UART4 RX | PB1 | 调试口预留 |
-| UART5 TX | PB8 | SecBoot UART5 transport TX |
-| UART5 RX | PB9 | SecBoot UART5 transport RX |
+| UART5 TX | PB4 | SecBoot UART5 transport TX，当前开发板实测配置 |
+| UART5 RX | PB5 | SecBoot UART5 transport RX，当前开发板实测配置 |
 
 建议使用两个串口工具：一个接 UART4 看 log，一个接 UART5 给上位机刷写。
 
 默认波特率：`115200 8N1`。
+
+当前开发板串口映射：
+
+| 用途 | 端口 | 参数 |
+|---|---|---|
+| UART4 调试日志 | `COM16` | `115200 8N1` |
+| UART5 SecBoot 升级 | `COM24` | `115200 8N1` |
+
+`COM24` 目前只连接 UART TX/RX，不控制 `NRST`。已有有效 App 时，运行带 `--recover-ms` 的升级命令，并在 recovery 时间内人工按复位键。RTS/DTR 自动硬复位留待后续硬件版本实现。
 
 ## Flash 布局
 
@@ -73,6 +82,66 @@ python -m pip install -r tool/xy_secboot/requirements.txt
 ```bash
 make GCC_PATH="D:/Program Files (x86)/GNU Arm Embedded Toolchain/10 2021.10/bin/"
 ```
+
+## 当前开发板快速操作
+
+以下命令均从仓库根目录运行，使用 PowerShell 单行格式。示例 counter 仅对应当前已验证进度：设备已确认到 `security_counter=11`，下一次升级必须使用 `12`；每次成功发布后继续严格递增，不能重复使用本节固定值。
+
+1. 构建 SecBoot：
+
+```powershell
+make -C "project/Sec-boot-N32/Makefile" clean; if ($?) { make -C "project/Sec-boot-N32/Makefile" }
+```
+
+2. 使用 pyOCD 烧录 SecBoot：
+
+```powershell
+make -C "project/Sec-boot-N32/Makefile" flash
+```
+
+3. 使用 J-Link 烧录 SecBoot，烧录目标不会自动触发构建，因此先执行 `make`：
+
+```powershell
+make -C "project/Sec-boot-N32/Makefile"; if ($?) { make -C "project/Sec-boot-N32/Makefile" download-jlink }
+```
+
+4. 构建 PLB App：
+
+```powershell
+make -C "project/PLB -N32/Makefile" clean; if ($?) { make -C "project/PLB -N32/Makefile" }
+```
+
+5. 生成 counter 12 升级包：
+
+```powershell
+python "tool/xy_secboot/xy_secboot.py" pack --input "project/PLB -N32/Makefile/build/PLB.bin" --output "project/PLB -N32/Makefile/build/PLB_v2_counter12.sbp" --product-id 0x00010001 --image-addr 0x08007800 --entry-addr 0x08007800 --image-version 2 --security-counter 12 --hmac-key "tool/xy_secboot/dev_hmac_key.txt"
+```
+
+6. 检查升级包：
+
+```powershell
+python "tool/xy_secboot/xy_secboot.py" inspect "project/PLB -N32/Makefile/build/PLB_v2_counter12.sbp"
+```
+
+7. COM24 保守升级。执行命令后在 5 秒内人工按复位键：
+
+```powershell
+python "tool/xy_secboot/xy_secboot.py" flash --port COM24 --baud 115200 --package "project/PLB -N32/Makefile/build/PLB_v2_counter12.sbp" --payload 128 --timeout-ms 2000 --retries 20 --recover-ms 5000 --reset
+```
+
+8. 后续新 counter 已确认链路无 NACK、`drop=0` 后，可改用 payload 256：
+
+```powershell
+python "tool/xy_secboot/xy_secboot.py" flash --port COM24 --baud 115200 --package "project/PLB -N32/Makefile/build/PLB_v2_counter12.sbp" --payload 256 --timeout-ms 1000 --retries 10 --recover-ms 2000 --reset
+```
+
+9. 如果 COM16 已持续输出 `SecBoot-N32 heartbeat`，设备已经停在 bootloader，可对新 counter 包省略 recovery 和人工复位：
+
+```powershell
+python "tool/xy_secboot/xy_secboot.py" flash --port COM24 --baud 115200 --package "project/PLB -N32/Makefile/build/PLB_v2_counter12.sbp" --payload 256 --timeout-ms 1000 --retries 10 --reset
+```
+
+第 7、8、9 项是不同现场状态下的升级命令，三选一执行，不是连续步骤。counter 12 包一旦成功安装并确认，下次升级必须重新打包为 counter 13 或更高。不要为了重复测速再次刷入相同 counter 包。
 
 ## 构建 Bootloader
 
@@ -180,7 +249,7 @@ python tool/xy_secboot/xy_secboot.py ports
 
 ```bash
 python tool/xy_secboot/xy_secboot.py flash \
-  --port COM12 \
+  --port COM24 \
   --baud 115200 \
   --package build/app.sbp \
   --payload 256 \
@@ -205,7 +274,7 @@ END -> ACK/ERROR
 
 ```bash
 python tool/xy_secboot/xy_secboot.py flash \
-  --port COM12 \
+  --port COM24 \
   --baud 115200 \
   --package build/app.sbp \
   --payload 256 \
@@ -220,7 +289,7 @@ python tool/xy_secboot/xy_secboot.py flash \
 
 ```bash
 python tool/xy_secboot/xy_secboot.py flash \
-  --port COM12 \
+  --port COM24 \
   --baud 115200 \
   --package build/app.sbp \
   --payload 256 \
@@ -591,7 +660,8 @@ WRP/RDP/option bytes 保护暂不在当前单板 V1 bring-up 中实测，避免�
 | UART DATA | bad offset | 通过 | 返回 `BAD_OFFSET` |
 | Host | bad package CRC | 通过 | `package crc32 mismatch` |
 | Tooling | detail 解码 | 通过 | `MANIFEST_MAC_FAILED(...)` |
-| Tooling | 版本日志 | 待验证 | `SecBoot-N32 V1.1-dev` / `PLB-N32 App V1.1-dev` |
+| Tooling | 版本日志 | 通过 | `SecBoot-N32 V1.1.3-dev` / `PLB-N32 App V1.1-dev` |
+| UART RX | ISR 单一硬件接收者 | 通过 | counter 11 实测无 NACK，`drop=0` |
 | Production | WRP/RDP | 跳过 | 单板阶段不做，避免锁板 |
 
 ### Porting Boundary
@@ -646,13 +716,13 @@ python tool/xy_secboot/plb_app_flow.py --clean --flash-boot
 通过 UART5 刷写 PLB App 包：
 
 ```bash
-python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12
+python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM24
 ```
 
 刷写后抓取 UART4 log：
 
 ```bash
-python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM12 --capture-log COM8
+python tool/xy_secboot/plb_app_flow.py --flash-app-uart --port COM24 --capture-log COM16
 ```
 
 当前 MCU 端开发 HMAC 验证和 reset-time verify + jump app 已接入，自动化流程可以验证构建、打包、MANIFEST/DATA 传输、Flash 写入、END 认证链路和复位启动路径。
@@ -710,7 +780,9 @@ detail        4 bytes
 |---|---|---|
 | `pyserial is required` | 未安装依赖 | 执行 `python -m pip install -r tool/xy_secboot/requirements.txt` |
 | `No serial ports found` | 串口驱动或连接异常 | 检查 USB-UART、线序、电源 |
-| `timeout waiting for secboot frame` | UART5 接错或 bootloader 未运行 | 检查 PB8/PB9、波特率、UART4 log |
+| `timeout waiting for secboot frame` | UART5 接错、bootloader 未运行或有效 App 已跳转 | 检查 PB4/PB5、波特率和 COM16 日志；必要时用 `--recover-ms 5000` 并人工复位 |
+| 大量 `BAD_HEADER_CRC` / `BAD_PAYLOAD_CRC` | UART 丢字节、干扰或旧版 SecBoot 双路径读取 UART | 确认使用 `V1.1.3-dev`，先改用 payload 128，检查 GND、线材和串口独占 |
+| heartbeat 中 `drop` 非零 | UART RX ring buffer 溢出 | 停止升级，确认 `V1.1.3-dev` 和 COM24 未被其他程序占用，降低 payload 后重试 |
 | `BAD_MANIFEST` | 地址、产品 ID、大小不匹配 | 检查 pack 参数 |
 | `BAD_OFFSET` | 传输 offset 不连续 | 重新刷写，检查串口稳定性 |
 | `FLASH_WRITE_FAILED` | Flash 未擦除、越界或供电异常 | 确认 App 区地址和大小 |

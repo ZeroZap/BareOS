@@ -43,7 +43,7 @@ struct etimer {
     struct etimer  *next;        /* intrusive active-list link           */
     struct process *owner;       /* process to notify on expiry (or NULL)*/
     uint32_t        start_tick;
-    uint32_t        interval_ms;
+    uint32_t        interval_ticks;
     bool            armed;
 };
 
@@ -75,6 +75,15 @@ uint32_t etimer_remaining_ms(const struct etimer *et);
 /** Configured interval in ms. */
 uint32_t etimer_interval_ms(const struct etimer *et);
 
+/** Ticks remaining until expiry (0 if expired or disarmed). */
+uint32_t etimer_remaining_ticks(const struct etimer *et);
+
+/** Earliest active etimer deadline in ticks; 0 if already due, 0xFFFFFFFF if none. */
+uint32_t etimer_next_expiration_ticks(void);
+
+/** PM timeout adapter for xy_pm_register_timeout(). */
+uint32_t etimer_pm_timeout_ticks(void *arg);
+
 /**
  * Walk all active etimers; for each expired one post PROCESS_EVENT_TIMER
  * to its owner process (if set) and remove it from the active list.
@@ -85,6 +94,7 @@ void etimer_run(void);
 
 /* ── Tick source ─────────────────────────────────────────────────────── */
 
+uint32_t etimer_now_tick(void);
 uint32_t etimer_now_ms(void);
 
 #ifdef __cplusplus

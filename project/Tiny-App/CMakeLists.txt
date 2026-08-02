@@ -67,6 +67,9 @@ set(COMP_SRCS
     # TLV
     ${COMP}/tlv/xy_tlv.c
 
+    # JSON
+    ${COMP}/json/corejson/core_json.c
+
     # button
     ${COMP}/btn/xy_btn.c
 
@@ -130,6 +133,8 @@ set(INCDIRS
     ${COMP}/pm
     ${COMP}/timer
     ${COMP}/tlv
+    ${COMP}/json
+    ${COMP}/json/corejson
     ${COMP}/tick
     ${COMP}/btn
     ${COMP}/gnss

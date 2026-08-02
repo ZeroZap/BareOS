@@ -113,15 +113,6 @@ void n32_uart5_secboot_init(void)
 
 void n32_uart5_secboot_poll(void)
 {
-    while (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_RXDNE) == SET) {
-        uint8_t ch = (uint8_t)USART_ReceiveData(SECBOOT_UART);
-        g_n32_uart5_last_rx = ch;
-        g_n32_uart5_rx_count++;
-        if (xy_rb_putchar(&s_uart5_rx_rb, ch) == 0U) {
-            g_n32_uart5_rx_drop_count++;
-        }
-    }
-
     g_n32_uart5_rb_pending = (uint32_t)xy_rb_data_len(&s_uart5_rx_rb);
 }
 
@@ -202,12 +193,10 @@ void n32_uart5_secboot_isr(void)
         if (xy_rb_putchar(&s_uart5_rx_rb, ch) == 0U) {
             g_n32_uart5_rx_drop_count++;
         }
-    }
-
-    if ((USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_OREF) == SET) ||
-        (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_NEF) == SET) ||
-        (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_FEF) == SET) ||
-        (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_PEF) == SET)) {
+    } else if ((USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_OREF) == SET) ||
+               (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_NEF) == SET) ||
+               (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_FEF) == SET) ||
+               (USART_GetFlagStatus(SECBOOT_UART, USART_FLAG_PEF) == SET)) {
         (void)SECBOOT_UART->STS;
         (void)SECBOOT_UART->DAT;
     }

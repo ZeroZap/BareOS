@@ -35,3 +35,14 @@ Exit codes:
 - `0`: capture completed and checks passed.
 - `1`: expected pattern missing, fail pattern matched, or no serial port found for `--list`.
 - `2`: usage/dependency error.
+
+## AT Server Simulator
+
+`at_server_sim/at_server_sim.py` emulates EC2X, SIM76, or ESP-AT command responses over a serial port for PLB-N32 AT client validation. It supports prompt/data transfers, URCs, fragmented responses, timeout injection, and error injection.
+
+```sh
+python -m pip install -r tool/at_server_sim/requirements.txt
+python tool/at_server_sim/at_server_sim.py --port COM8 --baud 115200 --profile ec2x
+```
+
+See `tool/at_server_sim/README.md` for wiring and validation scenarios.

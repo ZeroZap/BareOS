@@ -14,8 +14,7 @@
 #include "pc_uart.h"
 #include "xy_log.h"
 #include "etimer.h"
-
-extern volatile unsigned int g_sys_tick_ms;
+#include "xy_tick.h"
 
 /* ── Shared shell instance ───────────────────────────────────────────── */
 
@@ -26,7 +25,8 @@ tiny_cmd_t g_shell;
 static int cmd_info(tiny_cmd_t *sh, int argc, char *argv[])
 {
     (void)argc; (void)argv;
-    tiny_cmd_printf(sh, "BareOS PC build — tick=%u ms\r\n", g_sys_tick_ms);
+    tiny_cmd_printf(sh, "BareOS PC build — tick=%u (%u ms)\r\n",
+                    (unsigned int)xy_tick_now(), xy_tick_now_ms());
     return 0;
 }
 
@@ -62,7 +62,7 @@ PROCESS_THREAD(heartbeat_process, ev, data)
     while (1) {
         etimer_set(&t, 1000u);
         PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&t));
-        xy_log_i("[%u ms] alive", g_sys_tick_ms);
+        xy_log_i("[%u ms] alive", xy_tick_now_ms());
     }
 
     PROCESS_END();

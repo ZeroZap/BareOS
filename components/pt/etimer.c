@@ -9,14 +9,18 @@
 
 #include "etimer.h"
 #include "process.h"   /* process_current(), process_post(), PROCESS_EVENT_TIMER */
+#include "xy_tick.h"
 
 /* ── Tick source ─────────────────────────────────────────────────────── */
 
-extern volatile unsigned int g_sys_tick_ms;
+uint32_t etimer_now_tick(void)
+{
+    return (uint32_t)xy_tick_now();
+}
 
 uint32_t etimer_now_ms(void)
 {
-    return (uint32_t)g_sys_tick_ms;
+    return xy_tick_now_ms();
 }
 
 /* ── Active list ─────────────────────────────────────────────────────── */
@@ -48,8 +52,8 @@ static void list_remove(struct etimer *et)
 
 void etimer_set(struct etimer *et, uint32_t interval_ms)
 {
-    et->start_tick  = etimer_now_ms();
-    et->interval_ms = interval_ms;
+    et->start_tick     = etimer_now_tick();
+    et->interval_ticks = xy_tick_from_ms(interval_ms);
     et->armed       = true;
     et->owner       = process_current(); /* NULL when called outside a process */
     list_add(et);
@@ -63,14 +67,14 @@ void etimer_stop(struct etimer *et)
 
 void etimer_reset(struct etimer *et)
 {
-    et->start_tick = etimer_now_ms();
+    et->start_tick = etimer_now_tick();
     et->armed      = true;
     list_add(et);
 }
 
 void etimer_restart(struct etimer *et)
 {
-    et->start_tick += et->interval_ms;  /* advance by one period — no drift */
+    et->start_tick += et->interval_ticks;  /* advance by one period, no drift */
     et->armed       = true;
     list_add(et);
 }
@@ -78,19 +82,47 @@ void etimer_restart(struct etimer *et)
 bool etimer_expired(const struct etimer *et)
 {
     if (!et->armed) return false;
-    return (etimer_now_ms() - et->start_tick) >= et->interval_ms;
+    return (etimer_now_tick() - et->start_tick) >= et->interval_ticks;
+}
+
+uint32_t etimer_remaining_ticks(const struct etimer *et)
+{
+    if (!et->armed) return 0;
+    uint32_t elapsed = etimer_now_tick() - et->start_tick;
+    return (elapsed >= et->interval_ticks) ? 0u : (et->interval_ticks - elapsed);
+}
+
+uint32_t etimer_next_expiration_ticks(void)
+{
+    struct etimer *et;
+    uint32_t next = 0xFFFFFFFFu;
+
+    for (et = s_active; et; et = et->next) {
+        if (et->armed) {
+            uint32_t rem = etimer_remaining_ticks(et);
+            if (rem < next) {
+                next = rem;
+            }
+        }
+    }
+
+    return next;
+}
+
+uint32_t etimer_pm_timeout_ticks(void *arg)
+{
+    (void)arg;
+    return etimer_next_expiration_ticks();
 }
 
 uint32_t etimer_remaining_ms(const struct etimer *et)
 {
-    if (!et->armed) return 0;
-    uint32_t elapsed = etimer_now_ms() - et->start_tick;
-    return (elapsed >= et->interval_ms) ? 0u : (et->interval_ms - elapsed);
+    return xy_tick_to_ms(etimer_remaining_ticks(et));
 }
 
 uint32_t etimer_interval_ms(const struct etimer *et)
 {
-    return et->interval_ms;
+    return xy_tick_to_ms(et->interval_ticks);
 }
 
 /* ── etimer_run — called by process_run() ──────────────────────────── */

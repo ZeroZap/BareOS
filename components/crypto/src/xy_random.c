@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "xy_rng.h"
+#include "xy_tick.h"
 
 #ifdef _WIN32
 #  include <windows.h>
@@ -9,9 +10,7 @@
 #  include <unistd.h>
 #endif
 
-/* Seed source without time.h: BSP tick counter as fallback entropy.
- * The BSP must define g_sys_tick_ms (SysTick on MCU, clock() on PC). */
-extern volatile unsigned int g_sys_tick_ms;
+/* Seed source without time.h: BareOS tick counter as fallback entropy. */
 
 // 简单的线性同余生成器状态
 static uint32_t rng_state  = 1;
@@ -23,7 +22,7 @@ static void init_rng(void)
         return;
 
     /* Mix SysTick counter with stack address for entropy without time.h */
-    uint32_t seed = g_sys_tick_ms;
+    uint32_t seed = xy_tick_now();
     seed ^= (uint32_t)(uintptr_t)&seed;
 
 #ifdef _WIN32

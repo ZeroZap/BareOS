@@ -22,7 +22,10 @@ set(COMP_SRCS
     ${COMP}/clib/xy_common.c
     ${COMP}/clib/xy_assert.c
     ${COMP}/log/xy_log.c
+    ${COMP}/hal/xy_hal_stub.c
     ${COMP}/mem/xy_mem.c
+    ${COMP}/tick/xy_tick.c
+    ${COMP}/pm/xy_pm.c
     ${COMP}/at/src/at_chat.c
     ${COMP}/at/src/at_port.c
     ${COMP}/cell/xy_cell.c
@@ -49,7 +52,10 @@ target_include_directories(bareos_plb PRIVATE
     src
     ${COMP}/clib
     ${COMP}/log
+    ${COMP}/hal
     ${COMP}/mem
+    ${COMP}/tick
+    ${COMP}/pm
     ${COMP}/at/include
     ${COMP}/cell
     ${COMP}/gnss
@@ -86,7 +92,10 @@ target_include_directories(bareos_plb_tests PRIVATE
     src
     ${COMP}/clib
     ${COMP}/log
+    ${COMP}/hal
     ${COMP}/mem
+    ${COMP}/tick
+    ${COMP}/pm
     ${COMP}/at/include
     ${COMP}/cell
     ${COMP}/gnss
@@ -97,7 +106,10 @@ target_include_directories(bareos_plb_cell_backend_tests PRIVATE
     src
     ${COMP}/clib
     ${COMP}/log
+    ${COMP}/hal
     ${COMP}/mem
+    ${COMP}/tick
+    ${COMP}/pm
     ${COMP}/at/include
     ${COMP}/cell
     ${COMP}/gnss

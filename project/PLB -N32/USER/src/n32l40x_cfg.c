@@ -13,12 +13,15 @@ __IO uint32_t mwTick;
 volatile uint32_t g_n32_debug_log_tx_count;
 volatile uint8_t g_n32_debug_log_last_char;
 volatile uint32_t g_n32_uart5_rx_count;
+volatile uint32_t g_n32_uart5_io_wake_count;
 volatile uint32_t g_n32_uart5_tx_count;
 volatile uint32_t g_n32_uart5_rx_drop_count;
 volatile uint32_t g_n32_uart5_rb_pending;
 volatile uint8_t g_n32_uart5_last_rx;
 static xy_rb_t s_uart5_rx_rb;
 static uint8_t s_uart5_rx_pool[128];
+static xy_rb_t s_uart5_tx_rb;
+static uint8_t s_uart5_tx_pool[512];
 static uint32_t s_n32_lptim_clock_hz;
 
 #ifndef PLB_N32_LSI_HZ
@@ -90,6 +93,32 @@ static void n32_uart5_secboot_irq_enable(void)
 
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
     NVIC_InitStructure.NVIC_IRQChannel = UART5_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 8;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+}
+
+static void n32_uart5_io_wakeup_enable(void)
+{
+    EXTI_InitType EXTI_InitStructure;
+    NVIC_InitType NVIC_InitStructure;
+
+    /* PB5 remains UART5 RX; its start-bit falling edge is also an IO wake. */
+    GPIO_ConfigEXTILine(GPIOB_PORT_SOURCE, GPIO_PIN_SOURCE5);
+    EXTI_ClrITPendBit(EXTI_LINE5);
+    EXTI_InitStruct(&EXTI_InitStructure);
+    EXTI_InitStructure.EXTI_Line = EXTI_LINE5;
+    EXTI_InitStructure.EXTI_Mode = EXTI_Mode_Interrupt;
+    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Falling;
+    EXTI_InitStructure.EXTI_LineCmd = ENABLE;
+    EXTI_InitPeripheral(&EXTI_InitStructure);
+
+    RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_PWR, ENABLE);
+    PWR->CTRL3 |= PWR_CTRL3_IWKUPLEN;
+
+    NVIC_ClearPendingIRQ(EXTI9_5_IRQn);
+    NVIC_InitStructure.NVIC_IRQChannel = EXTI9_5_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 8;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
@@ -194,6 +223,7 @@ void n32_uart5_secboot_write_str(const char *str)
 void n32_uart5_secboot_init(void)
 {
     xy_rb_init(&s_uart5_rx_rb, s_uart5_rx_pool, (int32_t)sizeof(s_uart5_rx_pool));
+    xy_rb_init(&s_uart5_tx_rb, s_uart5_tx_pool, (int32_t)sizeof(s_uart5_tx_pool));
     USART_EnableDMA(UART5, USART_DMAREQ_RX, DISABLE);
     while (USART_GetFlagStatus(UART5, USART_FLAG_RXDNE) == SET) {
         (void)USART_ReceiveData(UART5);
@@ -201,6 +231,26 @@ void n32_uart5_secboot_init(void)
     USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);
     USART_ConfigInt(UART5, USART_INT_ERRF, ENABLE);
     n32_uart5_secboot_irq_enable();
+    n32_uart5_io_wakeup_enable();
+}
+
+unsigned int n32_uart5_write_nonblock(const void *data, unsigned int len)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    unsigned int written = 0u;
+    uint32_t key;
+
+    if (bytes == NULL) {
+        return 0u;
+    }
+    while (written < len && xy_rb_putchar(&s_uart5_tx_rb, bytes[written]) != 0u) {
+        written++;
+    }
+
+    key = xy_hal_irq_save();
+    USART_ConfigInt(UART5, USART_INT_TXDE, ENABLE);
+    xy_hal_irq_restore(key);
+    return written;
 }
 
 void n32_uart5_secboot_poll(void)
@@ -264,6 +314,17 @@ int n32_uart5_secboot_write(const uint8_t *data, size_t len, uint32_t timeout_ms
 
 void n32_uart5_secboot_isr(void)
 {
+    if (USART_GetIntStatus(UART5, USART_INT_TXDE) == SET) {
+        uint8_t ch;
+
+        if (xy_rb_getchar(&s_uart5_tx_rb, &ch) == 1U) {
+            USART_SendData(UART5, (uint16_t)ch);
+            g_n32_uart5_tx_count++;
+        } else {
+            USART_ConfigInt(UART5, USART_INT_TXDE, DISABLE);
+        }
+    }
+
     if (USART_GetIntStatus(UART5, USART_INT_RXDNE) == SET) {
         uint8_t ch = (uint8_t)USART_ReceiveData(UART5);
         g_n32_uart5_last_rx = ch;
@@ -593,8 +654,9 @@ bool GPIO_Configuration(void)
     GPIO_InitStructure.Pin            = GPIO_PIN_0;
     GPIO_InitPeripheral(GPIOB,&GPIO_InitStructure);
      
+    /* Match the SecBoot development UART5 wiring used by COM24. */
     GPIO_InitStructure.GPIO_Alternate = GPIO_AF6_UART5;
-    GPIO_InitStructure.Pin            = GPIO_PIN_8;
+    GPIO_InitStructure.Pin            = GPIO_PIN_4;
     GPIO_InitPeripheral(GPIOB,&GPIO_InitStructure);
      
     GPIO_InitStructure.GPIO_Alternate = GPIO_AF0_USART3;
@@ -610,7 +672,7 @@ bool GPIO_Configuration(void)
     GPIO_InitStructure.Pin            = GPIO_PIN_0 | GPIO_PIN_4 | GPIO_PIN_8 | GPIO_PIN_15;
     GPIO_InitPeripheral(GPIOA,&GPIO_InitStructure);
      
-    GPIO_InitStructure.Pin            = GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_12 | GPIO_PIN_15;
+    GPIO_InitStructure.Pin            = GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_12 | GPIO_PIN_15;
     GPIO_InitPeripheral(GPIOB,&GPIO_InitStructure);
      
     GPIO_InitStructure.Pin            = GPIO_PIN_14 | GPIO_PIN_15;
@@ -634,8 +696,8 @@ bool GPIO_Configuration(void)
     GPIO_InitStructure.Pin            = GPIO_PIN_1;
     GPIO_InitPeripheral(GPIOB,&GPIO_InitStructure);
      
-    GPIO_InitStructure.GPIO_Alternate = GPIO_AF6_UART5;
-    GPIO_InitStructure.Pin            = GPIO_PIN_9;
+    GPIO_InitStructure.GPIO_Alternate = GPIO_AF7_UART5;
+    GPIO_InitStructure.Pin            = GPIO_PIN_5;
     GPIO_InitPeripheral(GPIOB,&GPIO_InitStructure);
      
     GPIO_InitStructure.GPIO_Alternate = GPIO_AF5_USART3;

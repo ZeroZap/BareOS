@@ -4,6 +4,12 @@
 #include "xy_sys.h"
 #include "xy_io.h"
 #include "xy_log.h"
+#include "xy_tick.h"
+#include "xy_pm.h"
+#include "xy_timer.h"
+#include "process.h"
+#include "etimer.h"
+#include "xy_event.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -11,8 +17,6 @@
 #include <stdlib.h>
 
 /* ── Tick ────────────────────────────────────────────────────────────── */
-
-volatile unsigned int g_sys_tick_ms = 0;
 
 static clock_t s_clk_start;
 
@@ -27,14 +31,23 @@ void pc_bsp_init(void)
 {
     s_clk_start = clock();
     xy_mem_pool_init(&s_heap_pool, "pc_heap", s_heap_buf, sizeof(s_heap_buf));
+    process_init();
+    xy_timer_init();
+    xy_pm_init(NULL);
+    xy_pm_register_sleep_check(process_pm_can_sleep, NULL);
+    xy_pm_register_sleep_check(xy_event_pm_can_sleep, NULL);
+    xy_pm_register_timeout(etimer_pm_timeout_ticks, NULL);
+    xy_pm_register_timeout(xy_timer_pm_timeout_ticks, NULL);
+    xy_pm_register_wake_hook(xy_timer_pm_wake_hook, NULL);
     rtimer_init();
 }
 
 void pc_tick_update(void)
 {
     clock_t now = clock();
-    g_sys_tick_ms = (unsigned int)(
-        (unsigned long long)(now - s_clk_start) * 1000ULL / (unsigned long long)CLOCKS_PER_SEC);
+    xy_tick_set((xy_tick_t)(
+        (unsigned long long)(now - s_clk_start) * (unsigned long long)XY_TICK_HZ /
+        (unsigned long long)CLOCKS_PER_SEC));
 }
 
 /* ── BSP hook: log output ────────────────────────────────────────────── */
@@ -82,9 +95,8 @@ void rtimer_arch_init(void)    { s_rtimer_armed = 0; }
 
 rtimer_clock_t rtimer_arch_now(void)
 {
-    /* Scale ms tick → rtimer ticks (RTIMER_SECOND / 1000 per ms). */
-    return (rtimer_clock_t)((unsigned long long)g_sys_tick_ms *
-                             (RTIMER_SECOND / 1000UL));
+    return (rtimer_clock_t)((unsigned long long)xy_tick_now() *
+                             (unsigned long long)RTIMER_SECOND / (unsigned long long)XY_TICK_HZ);
 }
 
 void rtimer_arch_schedule(rtimer_clock_t when)

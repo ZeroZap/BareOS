@@ -5,8 +5,7 @@
 #include "xy_evtlog.h"
 #include "xy_gnss.h"
 #include "xy_log.h"
-
-extern volatile unsigned int g_sys_tick_ms;
+#include "xy_tick.h"
 
 #define PLB_TX_MAX_ATTEMPTS  3u
 
@@ -27,7 +26,7 @@ static struct {
 
 static uint32_t now_s(void)
 {
-    return (uint32_t)(g_sys_tick_ms / 1000u);
+    return xy_tick_now_s();
 }
 
 static bool acquire_fix(xy_gnss_pos_t *pos)

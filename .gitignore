@@ -74,3 +74,5 @@ install_manifest.txt
 MCU-SDK/
 components-ref/
 /t
+__pycache__/
+*.py[cod]

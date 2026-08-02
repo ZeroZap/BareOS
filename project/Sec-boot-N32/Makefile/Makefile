@@ -113,6 +113,9 @@ C_INCS += $(HAL_DIR)/n32l40x_std_periph_driver/inc
 C_INCS += $(COMPONENTS_DIR)/clib
 C_INCS += $(COMPONENTS_DIR)/log
 C_INCS += $(COMPONENTS_DIR)/mem
+C_INCS += $(COMPONENTS_DIR)/hal
+C_INCS += $(COMPONENTS_DIR)/tick
+C_INCS += $(COMPONENTS_DIR)/pm
 C_INCS += $(COMPONENTS_DIR)/crypto/inc
 C_INCS += $(COMPONENTS_DIR)/xy_secboot/inc
 ## NTFx CODE END C includes ##
@@ -123,6 +126,15 @@ C_INCLUDES = $(addprefix -I,$(INCS_OBJS_PATH))
 
 CRYPTO_SOURCES += $(COMPONENTS_DIR)/crypto/src/xy_sha256_hmac.c
 C_SOURCES += $(CRYPTO_SOURCES)
+
+BAREOS_HAL_SOURCES += $(COMPONENTS_DIR)/hal/xy_hal_stub.c
+C_SOURCES += $(BAREOS_HAL_SOURCES)
+
+TICK_SOURCES += $(COMPONENTS_DIR)/tick/xy_tick.c
+C_SOURCES += $(TICK_SOURCES)
+
+PM_SOURCES += $(COMPONENTS_DIR)/pm/xy_pm.c
+C_SOURCES += $(PM_SOURCES)
 
 ######################################
 # Lib files

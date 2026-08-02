@@ -14,7 +14,7 @@ extern "C" {
 #include "n32l40x_cfg.h"
 /* NTFx CODE END Include*/
 
-#define PLB_N32_VERSION_STR "PLB-N32 App V1.2-pm-shallow-fix"
+#define PLB_N32_VERSION_STR "PLB-N32 App V1.9-at-scaffold"
 
 #ifdef __cplusplus
     }

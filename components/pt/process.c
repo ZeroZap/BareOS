@@ -170,3 +170,24 @@ int process_nevents(void)
 {
     return (int)(s_head - s_tail);
 }
+
+bool process_has_work(void)
+{
+    if (s_tail != s_head) {
+        return true;
+    }
+
+    for (struct process *p = s_list; p; p = p->next) {
+        if (p->needspoll) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool process_pm_can_sleep(void *arg)
+{
+    (void)arg;
+    return !process_has_work();
+}

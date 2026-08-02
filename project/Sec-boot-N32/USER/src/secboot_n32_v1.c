@@ -109,6 +109,7 @@ static uint8_t s_download_active;
 static uint16_t s_expected_seq;
 static uint32_t s_expected_offset;
 static uint32_t s_session_id;
+static uint8_t s_binary_session_active;
 static uint8_t s_payload[SECBOOT_N32_UART_V1_MAX_PAYLOAD];
 static xy_secboot_single_ctx_t s_secboot_ctx;
 
@@ -689,7 +690,12 @@ static int read_frame(secboot_uart_frame_t *frame, uint8_t first,
     if (secboot_n32_port_uart_read(&header[1], 1u, timeout_ms) != 1) {
         return -1;
     }
-    if (header[0] != 'S' || header[1] != 'B') {
+    while (header[1] == 'S') {
+        if (secboot_n32_port_uart_read(&header[1], 1u, timeout_ms) != 1) {
+            return -1;
+        }
+    }
+    if (header[1] != 'B') {
         return -1;
     }
     if (secboot_n32_port_uart_read(&header[2], sizeof(header) - 2u, timeout_ms) !=
@@ -733,6 +739,7 @@ static int read_frame(secboot_uart_frame_t *frame, uint8_t first,
 static void handle_hello(const secboot_uart_frame_t *frame)
 {
     s_session_id = frame->session_id;
+    s_binary_session_active = 1u;
     send_caps(frame->seq);
 }
 
@@ -893,6 +900,7 @@ void secboot_n32_v1_init(void)
     int rc;
 
     xy_secboot_set_crypto_ops(&s_secboot_crypto_ops);
+    s_binary_session_active = 0u;
     s_secboot_ctx.partition_table = &s_secboot_n32_table;
     s_secboot_ctx.crypto = &s_secboot_crypto_ops;
     s_secboot_ctx.port = &s_secboot_port;
@@ -1032,9 +1040,9 @@ void secboot_n32_v1_poll(void)
         return;
     }
     if (first != 'S') {
-        if (first == '?') {
+        if (!s_binary_session_active && first == '?') {
             secboot_n32_v1_send_banner();
-        } else if (first == 'p') {
+        } else if (!s_binary_session_active && first == 'p') {
             secboot_n32_v1_print_layout();
         }
         return;

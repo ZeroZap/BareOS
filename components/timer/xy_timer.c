@@ -1,7 +1,8 @@
 #include "xy_timer.h"
 #include "xy_tick.h"
+#include "xy_mem.h"
+#include "xy_hal.h"
 
-volatile xy_uint32_t g_xy_tick  = 0;
 volatile xy_uint32_t g_tick_pre = 0;
 
 typedef struct _xy_timer {
@@ -28,33 +29,53 @@ void xy_timer_init(void)
 
 xy_uint32_t xy_timer_get_tick(void)
 {
+    uint32_t key;
     xy_uint32_t ticks;
-    xy_enter_critical();
-    ticks = g_xy_tick;
-    xy_exit_critical();
+    key = xy_hal_irq_save();
+    ticks = xy_tick_now();
+    xy_hal_irq_restore(key);
     return ticks;
 }
 
 xy_uint32_t xy_timer_get_tick_from_isr(void)
 {
     xy_uint32_t ticks;
-    ticks = g_xy_tick;
+    ticks = xy_tick_now();
     return ticks;
 }
 
 void xy_timer_set_tick(xy_uint32_t tick)
 {
-    xy_enter_critical();
-    g_xy_tick  = tick;
+    uint32_t key = xy_hal_irq_save();
+    xy_tick_set(tick);
     g_tick_pre = tick;
-    xy_exit_critical();
+    xy_hal_irq_restore(key);
 }
 
-xy_uint16_t xy_timer_get_nexttick(void)
+xy_uint32_t xy_timer_get_nexttick(void)
 {
     if (g_xy_timer)
         return g_xy_timer->cnt;
     return 0;
+}
+
+xy_uint32_t xy_timer_pm_timeout_ticks(void *arg)
+{
+    uint32_t key;
+    xy_uint32_t timeout;
+
+    (void)arg;
+    key = xy_hal_irq_save();
+    timeout = g_xy_timer ? g_xy_timer->cnt : 0xFFFFFFFFu;
+    xy_hal_irq_restore(key);
+    return timeout;
+}
+
+void xy_timer_pm_wake_hook(xy_uint32_t elapsed_ticks, void *arg)
+{
+    (void)elapsed_ticks;
+    (void)arg;
+    xy_timer_ticks();
 }
 
 static void xy_timer_insert(xy_timer_t *timer)
@@ -109,7 +130,7 @@ xy_timer_ref xy_timer_create(xy_uint32_t cnt, xy_uint32_t reload,
         return NULL;
     }
 
-    p = (xy_timer_t *)xy_mem_malloc(sizeof(xy_timer_t));
+    p = (xy_timer_t *)xy_malloc(sizeof(xy_timer_t));
 
     if (p) {
         p->cnt       = cnt + xy_timer_get_tick() - g_tick_pre;
@@ -126,14 +147,14 @@ void xy_timer_ticks(void)
 {
     xy_timer_t *p;
     xy_uint32_t ticks;
-    xy_uint16_t i;
+    xy_uint32_t i;
 
     ticks      = xy_timer_get_tick();
     i          = ticks - g_tick_pre;
     g_tick_pre = ticks;
 
     // 如果有timer且时间进行着
-    while (g_xy_timer && i) {
+    while (g_xy_timer && (i || g_xy_timer->cnt == 0u)) {
         p = g_xy_timer;
         // 时间未到，则减掉i
         if (i < p->cnt) {
@@ -146,7 +167,7 @@ void xy_timer_ticks(void)
 
             if (p->func) {
                 p->flag = 1;
-#if (PLATFORM == PLATFORM_C51)
+#if defined(PLATFORM) && defined(PLATFORM_C51) && (PLATFORM == PLATFORM_C51)
                 (*p->func)(p, (void *)p->parameter);
 #else
                 (*p->func)(p, (void *)p->parameter);
@@ -168,7 +189,7 @@ void xy_timer_ticks(void)
                 // 状态为2表示在回调中被标记待删除，此处真正删除
                 if (p->flag == 2) {
                     xy_timer_remove(p);
-                    xy_mem_free(p);
+                    xy_free(p);
                 }
                 // 否则保持现状（单次定时器自然结束）
             } else {
@@ -190,11 +211,13 @@ void xy_timer_ticks(void)
         // 重新遍历，处理可能积压的待删除定时器
         p = g_xy_timer;
         while (p) {
+            xy_timer_t *next = p->next;
+
             if (p->flag == 2 && p->reload == 0) {
                 xy_timer_remove(p);
-                xy_mem_free(p);
+                xy_free(p);
             }
-            p = p->next;
+            p = next;
         }
     }
 }
@@ -226,7 +249,7 @@ void xy_timer_kill(xy_timer_ref timer_handler)
 
     xy_timer_remove(p);
     p->reload = 0;
-    xy_mem_free(p);
+    xy_free(p);
 }
 
 void xy_timer_change_cnt(xy_timer_ref timer_handler, xy_uint32_t cnt)
@@ -245,11 +268,11 @@ void xy_timer_change_cnt(xy_timer_ref timer_handler, xy_uint32_t cnt)
         return;
     }
 
-    xy_enter_critical();
+    xy_uint32_t key = xy_hal_irq_save();
     xy_timer_remove(p);
-    p->cnt = cnt + xy_timer_get_tick() - g_tick_pre;
+    p->cnt = cnt + xy_tick_now() - g_tick_pre;
     xy_timer_insert(p);
-    xy_exit_critical();
+    xy_hal_irq_restore(key);
 }
 
 void xy_timer_change_reload(xy_timer_ref timer_handler, xy_uint32_t reload)
@@ -262,9 +285,9 @@ void xy_timer_change_reload(xy_timer_ref timer_handler, xy_uint32_t reload)
     }
 
     p = (xy_timer_t *)timer_handler;
-    xy_enter_critical();
+    xy_uint32_t key = xy_hal_irq_save();
     p->reload = reload;
-    xy_exit_critical();
+    xy_hal_irq_restore(key);
 }
 
 void xy_timer_change_func(xy_timer_ref timer_handler, timer_proc pfunc)
@@ -277,9 +300,9 @@ void xy_timer_change_func(xy_timer_ref timer_handler, timer_proc pfunc)
     }
 
     p = (xy_timer_t *)timer_handler;
-    xy_enter_critical();
+    xy_uint32_t key = xy_hal_irq_save();
     p->func = pfunc;
-    xy_exit_critical();
+    xy_hal_irq_restore(key);
 }
 
 timer_proc xy_timer_get_func(xy_timer_ref timer_handler)

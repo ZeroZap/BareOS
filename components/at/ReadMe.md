@@ -194,3 +194,25 @@ at_obj_set_urc(g_at_4g, s_urc_tbl, sizeof(s_urc_tbl) / sizeof(s_urc_tbl[0]));
 - `recv_bufsize` 覆盖最长命令响应。
 - `urc_bufsize` 覆盖最长 URC 帧。
 - 低功耗 STOP 前确认 `at_obj_busy()` 为 false，或确认 UART/定时器可唤醒继续处理。
+
+## PLB-N32 preparation scaffold
+
+`project/PLB -N32/USER/src/plb_n32_at.c` provides the first board integration
+scaffold on the UART5 development link:
+
+- one statically resident `at_adapter_t`;
+- a dedicated 2 KiB object-allocation pool;
+- non-blocking RX from the UART ISR ring buffer;
+- non-blocking TX through an interrupt-driven 512-byte ring buffer;
+- foreground `at_obj_process()` polling;
+- `at_obj_pm_can_sleep()` registered as a PM sleep check.
+
+The scaffold deliberately queues no automatic command. UART5 is also the
+SecBoot development transport, so command probing must be explicitly enabled by
+the application only after the target AT device and UART ownership are defined.
+Production 4G, satellite, and GNSS integrations should each create a separate
+AT object and adapter for their physical UART.
+
+While an AT command or partial URC is active, the PM sleep check prevents sleep.
+An unrecognized partial URC is cleared by the normal `AT_URC_TIMEOUT`, so random
+development-port input cannot hold PM awake indefinitely.
