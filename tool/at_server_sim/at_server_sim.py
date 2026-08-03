@@ -281,6 +281,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expect-command", action="append", default=[], metavar="REGEX", help="required received command")
     parser.add_argument("--expect-payload-size", type=int, help="require one payload with this exact size")
     parser.add_argument("--expect-payload-sha256", help="require one payload with this SHA-256 hex digest")
+    parser.add_argument("--expect-payload-suffix-hex", help="require payload to end with these hex bytes")
     return parser.parse_args()
 
 
@@ -347,12 +348,18 @@ def run(args: argparse.Namespace) -> int:
         print(f"Missing expected commands: {', '.join(missing)}", file=sys.stderr)
         return 1
     expected_hash = args.expect_payload_sha256.lower() if args.expect_payload_sha256 else None
+    try:
+        expected_suffix = bytes.fromhex(args.expect_payload_suffix_hex) if args.expect_payload_suffix_hex else None
+    except ValueError as exc:
+        print(f"invalid payload suffix hex: {exc}", file=sys.stderr)
+        return 2
     matching_payload = any(
         (args.expect_payload_size is None or len(payload) == args.expect_payload_size)
         and (expected_hash is None or hashlib.sha256(payload).hexdigest() == expected_hash)
+        and (expected_suffix is None or payload.endswith(expected_suffix))
         for payload in simulator.payloads
     )
-    if (args.expect_payload_size is not None or expected_hash is not None) and not matching_payload:
+    if (args.expect_payload_size is not None or expected_hash is not None or expected_suffix is not None) and not matching_payload:
         actual = ", ".join(
             f"len={len(payload)} sha256={hashlib.sha256(payload).hexdigest()}"
             for payload in simulator.payloads

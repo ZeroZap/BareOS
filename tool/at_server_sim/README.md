@@ -226,6 +226,61 @@ PLB-N32 AT selftest PASSED
 结论：N32 UART5 真实非阻塞 adapter 在 TX ring 饱和时能够由 AT 核心正确续传，
 响应计时不会早于 payload 完整提交，发送期间和物理 TX 完成前的 PM 阻止逻辑有效。
 
+### 两段 payload 饱和验证
+
+`AT_SELFTEST_SEGMENTED=y` 模拟 SMS 的两段写入模型：第一段为 1024 字节确定性
+二进制正文，第二段为单字节 Ctrl-Z (`0x1a`)。AT 核心必须在 UART5 TX ring
+饱和和短写期间保持两段顺序。
+
+```text
+combined size   = 1025
+combined sha256 = 0fffc5e6c9aafc593ea65582451fbd1e91fa3b1a7b67b9e38c2f9e7306236266
+suffix          = 1a
+```
+
+构建 counter38 包：
+
+```powershell
+make -C "project/PLB -N32/Makefile" clean
+make -C "project/PLB -N32/Makefile" package AT_SELFTEST_SEGMENTED=y SECBOOT_IMAGE_VERSION=4 SECBOOT_SECURITY_COUNTER=38 SECBOOT_PACKAGE=build/PLB_at_segmented_counter38.sbp
+```
+
+模拟器联合校验长度、SHA-256 和 Ctrl-Z 尾字节：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --baud 115200 --profile ec2x --duration 20 --expect-command "^AT$" --expect-command "^AT\+CSQ$" --expect-command "^AT\+CEREG\?$" --expect-command "^AT\+QISEND=0,1025$" --expect-command "^AT\+SIMURC=RECV$" --expect-payload-size 1025 --expect-payload-sha256 0fffc5e6c9aafc593ea65582451fbd1e91fa3b1a7b67b9e38c2f9e7306236266 --expect-payload-suffix-hex 1a
+```
+
+板端通过日志必须包含：
+
+```text
+PLB-N32 AT selftest QISEND PASSED len=1025 segments=2
+PLB-N32 AT selftest TX calls=... short=... zero=...
+PLB-N32 AT selftest PASSED
+```
+
+### 2026-08-03 counter38 验证记录
+
+验证包：`PLB_at_segmented_counter38.sbp`，`image_version=4`，
+`security_counter=38`。
+
+| 项目 | 结果 |
+|---|---|
+| 两段入队 | 通过，1024 字节正文加独立 Ctrl-Z |
+| UART TX ring 饱和短写 | 通过，板端 `short > 0` |
+| 组合长度 | 通过，精确 1025 字节 |
+| 组合 SHA-256 | 通过，匹配 `0fffc5e6...06236266` |
+| 第二段位置 | 通过，最后一个字节为 `0x1a` |
+| 两段顺序与完整性 | 通过，无丢失、重复、提前或乱序 |
+| `SEND OK` | 通过，完整自检 `PASSED` |
+| payload 后 `ERROR` | 通过，仅发送一次组合 payload 后正确失败 |
+| payload 后无响应 | 通过，未重发任一段，约 10 秒后超时 |
+| prompt 丢失 | 通过，两段均未发送，约 5 秒后超时 |
+| UART/PM 收尾 | 通过，ring 清空、无 drop、无锁泄漏并恢复 STOP2 |
+
+结论：两段 TX queue 在真实 UART 短写和 ring 饱和条件下维持严格 FIFO，覆盖了
+SMS 正文加 Ctrl-Z 的核心发送模型。
+
 ## 建议的板端验证顺序
 
 1. 显式调用 `plb_n32_at_init()`，并在主循环持续调用 `plb_n32_at_process()`。

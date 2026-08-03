@@ -15,6 +15,10 @@
 #define PLB_N32_AT_SELFTEST_PAYLOAD_SIZE 11u
 #endif
 
+#ifndef PLB_N32_AT_SELFTEST_SEGMENTED
+#define PLB_N32_AT_SELFTEST_SEGMENTED 0
+#endif
+
 XY_MEM_POOL_DECLARE(s_at_mem, 2048u);
 
 static at_obj_t *s_at;
@@ -26,6 +30,7 @@ static const char *const s_selftest_commands[] = {
     "AT+CEREG?",
 };
 static unsigned char s_selftest_payload[PLB_N32_AT_SELFTEST_PAYLOAD_SIZE];
+static const unsigned char s_selftest_ctrl_z = 0x1au;
 static unsigned int s_selftest_step;
 static unsigned int s_selftest_tx_calls;
 static unsigned int s_selftest_tx_short_writes;
@@ -94,14 +99,41 @@ static const urc_item_t s_selftest_urc_table[] = {
 static int plb_n32_at_selftest_send_work(at_env_t *env)
 {
     int rc;
+    unsigned int send_len = (unsigned int)sizeof(s_selftest_payload) +
+                            (PLB_N32_AT_SELFTEST_SEGMENTED ? 1u : 0u);
 
     if (env->state == 0) {
         env->println(env, "AT+QISEND=0,%u",
-                     (unsigned int)sizeof(s_selftest_payload));
+                     send_len);
         env->reset_timer(env);
         env->state = 1;
         return 0;
     }
+#if PLB_N32_AT_SELFTEST_SEGMENTED
+    if (env->state == 1) {
+        if (env->contains(env, ">")) {
+            if (env->write == NULL ||
+                !env->write(env, s_selftest_payload,
+                            (unsigned int)sizeof(s_selftest_payload)) ||
+                !env->write(env, &s_selftest_ctrl_z, 1u)) {
+                s_selftest_active = false;
+                s_selftest_measure_tx = false;
+                xy_log_w("PLB-N32 AT selftest FAILED reason=SEGMENT_QUEUE");
+                env->finish(env, AT_RESP_ERROR);
+                return 0;
+            }
+            env->recvclr(env);
+            env->reset_timer(env);
+            env->state = 2;
+        } else if (env->is_timeout(env, 5000u)) {
+            s_selftest_active = false;
+            s_selftest_measure_tx = false;
+            xy_log_w("PLB-N32 AT selftest FAILED command=AT+QISEND");
+            env->finish(env, AT_RESP_ERROR);
+        }
+        return 0;
+    }
+#endif
     rc = at_prompt_send_step(env, s_selftest_payload,
                              sizeof(s_selftest_payload),
                              "SEND OK", "OK", NULL, 5000u, 10000u);
@@ -114,8 +146,9 @@ static int plb_n32_at_selftest_send_work(at_env_t *env)
             env->finish(env, AT_RESP_ERROR);
             return 0;
         }
-        xy_log_i("PLB-N32 AT selftest QISEND PASSED len=%u",
-                  (unsigned int)sizeof(s_selftest_payload));
+        xy_log_i("PLB-N32 AT selftest QISEND PASSED len=%u segments=%u",
+                 send_len,
+                 PLB_N32_AT_SELFTEST_SEGMENTED ? 2u : 1u);
         xy_log_i("PLB-N32 AT selftest TX calls=%u short=%u zero=%u",
                  s_selftest_tx_calls,
                  s_selftest_tx_short_writes,

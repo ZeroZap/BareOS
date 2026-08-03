@@ -46,6 +46,15 @@ class ATServerSimulatorTests(unittest.TestCase):
             hashlib.sha256(payload).hexdigest(),
         )
 
+    def test_segmented_stress_payload_ends_with_ctrl_z(self) -> None:
+        simulator, _ = self.make_simulator()
+        body = bytes((index * 31 + 7) & 0xFF for index in range(1024))
+        simulator.feed(b"AT+QISEND=0,1025\r\n")
+        simulator.feed(body)
+        simulator.feed(b"\x1a")
+        self.assertEqual(simulator.payloads, [body + b"\x1a"])
+        self.assertTrue(simulator.payloads[0].endswith(b"\x1a"))
+
     def test_qisend_accepts_cr_only_before_immediate_payload(self) -> None:
         simulator, _ = self.make_simulator()
         simulator.feed(b"AT+QISEND=0,3\rXYZ")
