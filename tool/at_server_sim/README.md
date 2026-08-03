@@ -139,6 +139,93 @@ PLB-N32 AT selftest FAILED reason=URC_TIMEOUT
 
 URC timeout 日志需要包含本节 deadline 修复的 counter34 或更新镜像。故障用例结束后应确认 `rb=0`、`drop=0`，且 UART5 RX window 最终关闭并重新允许 STOP2。
 
+### 2026-08-03 counter36 验证记录
+
+验证包：`PLB_at_selftest_counter36.sbp`，`image_version=2`，
+`security_counter=36`。设备完成 mailbox confirmed 后，使用同一镜像反复复位执行
+正常链路和故障注入，不重复升级相同 counter。
+
+| 用例 | 结果 |
+|---|---|
+| 逐字节响应分片 | 通过，5 条命令全部命中 |
+| QISEND prompt + 11 字节 payload | 通过，payload 为 `PLB-AT-DATA` |
+| 二进制接收 URC | 通过，`id=0 len=5 payload=HELLO` |
+| `AT+CSQ` ERROR + 两次重试 | 通过 |
+| `AT+CSQ` timeout + 两次重试 | 通过 |
+| QISEND prompt 丢失 | 通过，约 5 秒失败且未发送 payload |
+| payload 后 ERROR | 通过，payload 仅发送一次 |
+| payload 后无结果 | 通过，约 10 秒失败且未重发 payload |
+| URC header 截断 | 通过，进入 `URC_TIMEOUT` |
+| URC payload 截断 | 通过，进入 `URC_TIMEOUT` |
+| UART/PM 收尾 | 通过，`rb=0 drop=0 locks=0/0/0/0`，RX window 关闭后恢复 STOP2 |
+
+正常链路主机侧汇总为 `5 commands, 1 payloads`。板端最终输出：
+
+```text
+PLB-N32 AT selftest URC recv id=0 len=5 payload=HELLO
+PLB-N32 AT selftest PASSED
+PLB-N32 UART5 RX window closed, STOP2 allowed
+```
+
+本轮使用 `payload=256` 刷写时曾在 DATA 中途收到一次异常 `BAD_MANIFEST`；设备未提交
+manifest，随后使用 `payload=128 --timeout-ms 2000 --retries 20` 完整恢复并得到
+`END ACK detail=0x8007800`。该现象属于 SecBoot UART transport 稳定性跟踪项，不影响
+AT 自检结论。
+
+### UART TX ring 短写压力验证
+
+`AT_SELFTEST_STRESS=y` 将 QISEND payload 扩展为 1024 字节，超过 N32 UART5 的
+512 字节 TX ring。payload 使用确定性二进制模式：
+
+```text
+byte[i] = (i * 31 + 7) & 0xff
+sha256 = 8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7
+```
+
+构建压力包：
+
+```powershell
+make -C "project/PLB -N32/Makefile" clean
+make -C "project/PLB -N32/Makefile" package AT_SELFTEST_STRESS=y SECBOOT_IMAGE_VERSION=3 SECBOOT_SECURITY_COUNTER=37 SECBOOT_PACKAGE=build/PLB_at_tx_stress_counter37.sbp
+```
+
+模拟器自动校验 payload 长度和 SHA-256：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --baud 115200 --profile ec2x --duration 20 --expect-command "^AT$" --expect-command "^AT\+CSQ$" --expect-command "^AT\+CEREG\?$" --expect-command "^AT\+QISEND=0,1024$" --expect-command "^AT\+SIMURC=RECV$" --expect-payload-size 1024 --expect-payload-sha256 8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7
+```
+
+压力镜像要求板端至少观察到一次 adapter 短写，否则输出
+`FAILED reason=NO_SHORT_WRITE`。通过时应输出：
+
+```text
+PLB-N32 AT selftest QISEND PASSED len=1024
+PLB-N32 AT selftest TX calls=... short=... zero=...
+PLB-N32 AT selftest PASSED
+```
+
+其中 `short` 必须大于 0；`zero` 允许为 0 或更大，取决于 TX ISR 与主循环的相对时序。
+
+### 2026-08-03 counter37 验证记录
+
+验证包：`PLB_at_tx_stress_counter37.sbp`，`image_version=3`，
+`security_counter=37`。
+
+| 项目 | 结果 |
+|---|---|
+| 1024 字节 payload 长度 | 通过 |
+| payload SHA-256 | 通过，匹配 `8d7e5667...092212a7` |
+| UART5 512 字节 TX ring 短写 | 通过，板端 `short > 0` |
+| 短写续传完整性 | 通过，无丢失、重复或乱序 |
+| payload 后 `SEND OK` | 通过，完整自检 `PASSED` |
+| payload 后 `ERROR` | 通过，仅发送一次 payload 后正确失败 |
+| payload 后无响应 | 通过，未重发 payload，约 10 秒后超时 |
+| prompt 丢失 | 通过，未发送 payload，约 5 秒后超时 |
+| UART/PM 收尾 | 通过，ring 清空、无 drop、无 PM lock 泄漏并恢复 STOP2 |
+
+结论：N32 UART5 真实非阻塞 adapter 在 TX ring 饱和时能够由 AT 核心正确续传，
+响应计时不会早于 payload 完整提交，发送期间和物理 TX 完成前的 PM 阻止逻辑有效。
+
 ## 建议的板端验证顺序
 
 1. 显式调用 `plb_n32_at_init()`，并在主循环持续调用 `plb_n32_at_process()`。

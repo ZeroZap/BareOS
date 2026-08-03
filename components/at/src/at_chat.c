@@ -111,6 +111,14 @@ typedef struct {
  * @brief AT Object infomation.
  */
 typedef struct {
+    const unsigned char *data;
+    unsigned int len;
+    unsigned int offset;
+} at_tx_segment_t;
+
+#define AT_TX_SEGMENT_COUNT 2u
+
+typedef struct {
     at_obj_t          obj;              /* Inherit at_obj*/   
     at_env_t          env;              /* Public work environment*/
     work_item_t      *cursor;           /* Currently running work*/
@@ -137,6 +145,19 @@ typedef struct {
     unsigned short    recv_bufsize;     
     unsigned short    recv_cnt;         /* Command response receives counter*/
     unsigned short    match_len;        /* Response information matching length*/
+    at_tx_segment_t   tx[AT_TX_SEGMENT_COUNT];
+    unsigned char     tx_count;
+    unsigned char     tx_index;
+    char              tx_line[AT_MAX_CMD_LEN + 3u];
+#if AT_RAW_TRANSPARENT_EN
+    unsigned char     raw_to_peer[32];
+    unsigned char     raw_to_at[32];
+    unsigned char     raw_to_peer_len;
+    unsigned char     raw_to_peer_offset;
+    unsigned char     raw_to_at_len;
+    unsigned char     raw_to_at_offset;
+    unsigned char     raw_to_at_scan_len;
+#endif
     unsigned char     match_mask;       /* Response information matching mask*/
     unsigned          urc_enable: 1;    
     unsigned          urc_match : 1;    
@@ -206,23 +227,90 @@ static inline void at_unlock(at_info_t *ai)
         __get_adapter(ai)->unlock();
 }
 
-static inline void send_data(at_info_t *at, const void *buf, unsigned int len)
+static bool tx_pending(const at_info_t *ai)
 {
-    __get_adapter(at)->write(buf, len);
+    return ai->tx_index < ai->tx_count;
+}
+
+static void tx_clear(at_info_t *ai)
+{
+    ai->tx_count = 0u;
+    ai->tx_index = 0u;
+}
+
+static bool tx_queue(at_info_t *ai, const void *buf, unsigned int len)
+{
+    at_tx_segment_t *segment;
+
+    if (len == 0u) {
+        return true;
+    }
+    if (buf == NULL || ai->tx_count >= AT_TX_SEGMENT_COUNT) {
+        return false;
+    }
+    segment = &ai->tx[ai->tx_count++];
+    segment->data = (const unsigned char *)buf;
+    segment->len = len;
+    segment->offset = 0u;
+    return true;
+}
+
+static bool tx_queue_line(at_info_t *ai, const char *cmd)
+{
+    unsigned int len;
+
+    if (cmd == NULL || tx_pending(ai)) {
+        return false;
+    }
+    len = (unsigned int)strlen(cmd);
+    if (len >= AT_MAX_CMD_LEN) {
+        return false;
+    }
+    memcpy(ai->tx_line, cmd, len);
+    ai->tx_line[len] = '\r';
+    ai->tx_line[len + 1u] = '\n';
+    ai->tx_line[len + 2u] = '\0';
+    return tx_queue(ai, ai->tx_line, len + 2u);
+}
+
+static bool command_line_valid(const char *cmd)
+{
+    return cmd != NULL && strlen(cmd) < AT_MAX_CMD_LEN;
+}
+
+static bool tx_drain(at_info_t *ai)
+{
+    while (tx_pending(ai)) {
+        at_tx_segment_t *segment = &ai->tx[ai->tx_index];
+        unsigned int remaining = segment->len - segment->offset;
+        unsigned int written = __get_adapter(ai)->write(
+            segment->data + segment->offset, remaining);
+
+        if (written > remaining) {
+            written = remaining;
+        }
+        segment->offset += written;
+        if (segment->offset != segment->len) {
+            return false;
+        }
+        ai->tx_index++;
+    }
+    tx_clear(ai);
+    ai->timer = at_get_ms();
+    return true;
 }
 
 /**
  * @brief   Send command with newline.
  */
-static void send_cmdline(at_info_t *at, const char *cmd)
+static bool send_cmdline(at_info_t *at, const char *cmd)
 {
-    int len;
     if (cmd == NULL)
-        return;
-    len = strlen(cmd);
-    __get_adapter(at)->write(cmd, len);
-    __get_adapter(at)->write("\r\n", 2);
+        return false;
+    if (!tx_queue_line(at, cmd))
+        return false;
     AT_DEBUG(at,"->\r\n%s", cmd);
+    return true;
 }
 
 /**
@@ -519,11 +607,17 @@ static int do_cmd_handler(at_info_t *ai)
         if (wi->type == WORK_TYPE_CUSTOM && wi->sender != NULL) {
             wi->sender(env);
         } else if (wi->type == WORK_TYPE_BUF) {
-            __get_adapter(ai)->write(wi->buf, wi->bufsize);
+            if (!tx_queue(ai, wi->buf, wi->bufsize)) return false;
         }  else if (wi->type == WORK_TYPE_SINGLLINE) {
-            send_cmdline(ai, wi->singlline);
+            if (!send_cmdline(ai, wi->singlline)) {
+                do_at_callback(ai, wi, AT_RESP_ERROR);
+                return true;
+            }
         } else {
-            send_cmdline(ai, wi->buf);
+            if (!send_cmdline(ai, wi->buf)) {
+                do_at_callback(ai, wi, AT_RESP_ERROR);
+                return true;
+            }
         }
         env->state = AT_STAT_RECV;
         env->reset_timer(env);
@@ -594,7 +688,10 @@ static int send_multiline_handler(at_info_t *ai)
             do_at_callback(ai, wi, env->params ? AT_RESP_OK : AT_RESP_ERROR);
             return true;
         }
-        send_cmdline(ai, cmds[env->i]);
+        if (!send_cmdline(ai, cmds[env->i])) {
+            do_at_callback(ai, wi, AT_RESP_ERROR);
+            return true;
+        }
         env->recvclr(env);         
         env->reset_timer(env);
         env->state = AT_STAT_RECV;
@@ -640,14 +737,21 @@ static int send_multiline_handler(at_info_t *ai)
 static void at_send_line(at_info_t *ai, const char *fmt, va_list args)
 {
     int len;
-    char cmdline[AT_MAX_CMD_LEN];
-    len = xy_vsnprintf(cmdline, AT_MAX_CMD_LEN, fmt, args);
+    if (tx_pending(ai)) {
+        return;
+    }
+    len = xy_vsnprintf(ai->tx_line, AT_MAX_CMD_LEN + 1u, fmt, args);
+    if (len < 0 || len >= AT_MAX_CMD_LEN) {
+        return;
+    }
     //Clear receive buffer.
     ai->recv_cnt = 0;
     ai->recvbuf[0] = '\0';
-    send_data(ai, cmdline, len);
-    send_data(ai, "\r\n", 2);
-    AT_DEBUG(ai,"->\r\n%s\r\n", cmdline);
+    ai->tx_line[len] = '\r';
+    ai->tx_line[len + 1] = '\n';
+    ai->tx_line[len + 2] = '\0';
+    (void)tx_queue(ai, ai->tx_line, (unsigned int)len + 2u);
+    AT_DEBUG(ai,"->\r\n%.*s\r\n", len, ai->tx_line);
 }
 
 #if AT_URC_WARCH_EN
@@ -837,6 +941,13 @@ static int (*const work_handler_table[WORK_TYPE_MAX])(at_info_t *) = {
 static void at_work_process(at_info_t *ai)
 {
     at_env_t *env = &ai->env;
+    bool finished;
+    if (ai->cursor != NULL && ai->cursor->state == AT_WORK_STAT_ABORT) {
+        tx_clear(ai);
+    }
+    if (tx_pending(ai) && !tx_drain(ai)) {
+        return;
+    }
     if (ai->cursor == NULL) {
         if (!list_empty(&ai->hlist))
             ai->clist = &ai->hlist;
@@ -861,8 +972,14 @@ static void at_work_process(at_info_t *ai)
         }
         at_unlock(ai);
     }
+    finished = ai->cursor->state >= AT_WORK_STAT_FINISH ||
+               work_handler_table[ai->cursor->type](ai);
+    finished = finished || ai->cursor->state >= AT_WORK_STAT_FINISH;
+    if (tx_pending(ai) && !tx_drain(ai)) {
+        return;
+    }
     /* When the job execution is complete, put it into the idle work queue */
-    if (ai->cursor->state >= AT_WORK_STAT_FINISH || work_handler_table[ai->cursor->type](ai)) {
+    if (finished) {
         //Marked the work as done.
         if (ai->cursor->state == AT_WORK_STAT_RUN) {            
             update_work_state(ai->cursor, AT_WORK_STAT_FINISH, (at_resp_code)ai->cursor->code);
@@ -881,6 +998,9 @@ static void at_work_process(at_info_t *ai)
 at_obj_t *at_obj_create(const at_adapter_t *adap)
 {
     at_env_t *e;
+    if (adap == NULL || adap->write == NULL || adap->read == NULL) {
+        return NULL;
+    }
     at_info_t *ai = at_core_malloc(sizeof(at_info_t));
     if (ai == NULL)
         return NULL;
@@ -915,6 +1035,7 @@ at_obj_t *at_obj_create(const at_adapter_t *adap)
     e->println     = println;
     e->recvbuf     = get_recvbuf;
     e->recvclr     = recvbuf_clear;
+    e->write       = at_env_write;
     e->recvlen     = get_recv_count;
     e->contains    = find_substr;
     e->disposing   = at_isabort;
@@ -962,6 +1083,7 @@ bool at_obj_busy(at_obj_t *at)
     return ai->cursor != NULL ||
            !list_empty(&ai->hlist) ||
            !list_empty(&ai->llist) ||
+           tx_pending(ai) ||
            ai->urc_cnt != 0 ||
 #if AT_RAW_TRANSPARENT_EN
            ai->raw_trans ||
@@ -971,7 +1093,28 @@ bool at_obj_busy(at_obj_t *at)
 
 bool at_obj_pm_can_sleep(void *arg)
 {
-    return !at_obj_busy((at_obj_t *)arg);
+    at_obj_t *at = (at_obj_t *)arg;
+    const at_adapter_t *adapter;
+
+    if (at == NULL) {
+        return true;
+    }
+    if (at_obj_busy(at)) {
+        return false;
+    }
+    adapter = at->adap;
+    if (adapter->rx_pending != NULL && adapter->rx_pending() != 0u) {
+        return false;
+    }
+    return adapter->tx_idle == NULL || adapter->tx_idle();
+}
+
+bool at_env_write(at_env_t *env, const void *data, unsigned int len)
+{
+    if (env == NULL || env->obj == NULL) {
+        return false;
+    }
+    return tx_queue(obj_map(env->obj), data, len);
 }
 
 /**
@@ -1017,11 +1160,14 @@ void at_attr_deinit(at_attr_t *attr)
  */
 bool at_exec_vcmd(at_obj_t *at, const at_attr_t *attr, const char *cmd, va_list va)
 {
-    char buf[AT_MAX_CMD_LEN];
+    char buf[AT_MAX_CMD_LEN + 1u];
     int len;
     void *workid = NULL;
-    len = xy_vsnprintf(buf, AT_MAX_CMD_LEN, cmd, va);
-    if (len > 0) {
+    if (at == NULL || cmd == NULL) {
+        return false;
+    }
+    len = xy_vsnprintf(buf, AT_MAX_CMD_LEN + 1u, cmd, va);
+    if (len > 0 && len < AT_MAX_CMD_LEN) {
         workid = add_work_item(obj_map(at), WORK_TYPE_CMD, attr, buf, len + 1);
     }
     return workid != NULL;
@@ -1047,7 +1193,7 @@ bool at_exec_cmd(at_obj_t *at, const at_attr_t *attr, const char *cmd, ...)
 /**
  * @brief   Execute custom command
  * @param   attr AT attributes(NULL to use the default value)
- * @param   sender Command sending handler (such as sending any type of data through the env->obj->adap-write interface)
+ * @param   sender Command sending handler; use env->write() for payload data
  * @retval  Indicates whether the asynchronous work was enqueued successfully
  */
 bool at_custom_cmd(at_obj_t *at, const at_attr_t *attr, void (*sender)(at_env_t *env))
@@ -1076,6 +1222,9 @@ bool at_send_data(at_obj_t *at, const at_attr_t *attr, const void *databuf, unsi
  */
 bool at_send_singlline(at_obj_t *at, const at_attr_t *attr, const char *singlline)
 {
+    if (at == NULL || !command_line_valid(singlline)) {
+        return false;
+    }
     return add_work_item(obj_map(at), WORK_TYPE_SINGLLINE, attr, singlline, 0) != NULL;
 }
 
@@ -1096,6 +1245,16 @@ bool at_send_singlline(at_obj_t *at, const at_attr_t *attr, const char *singllin
  */
 bool at_send_multiline(at_obj_t *at, const at_attr_t *attr, const char **multiline)
 {
+    unsigned int i;
+
+    if (at == NULL || multiline == NULL) {
+        return false;
+    }
+    for (i = 0u; multiline[i] != NULL; i++) {
+        if (!command_line_valid(multiline[i])) {
+            return false;
+        }
+    }
     return add_work_item(obj_map(at), WORK_TYPE_MULTILINE, attr, multiline, 0) != NULL;
 }
 
@@ -1306,42 +1465,96 @@ at_resp_code  at_work_get_result(at_context_t *ctx)
 #endif
 
 #if AT_RAW_TRANSPARENT_EN
+static bool raw_drain(unsigned int (*write)(const void *, unsigned int),
+                      unsigned char *buf,
+                      unsigned char *offset,
+                      unsigned char *len)
+{
+    unsigned int remaining;
+    unsigned int written;
+
+    if (*offset >= *len) {
+        *offset = 0u;
+        *len = 0u;
+        return true;
+    }
+    remaining = (unsigned int)(*len - *offset);
+    written = write(buf + *offset, remaining);
+    if (written > remaining) {
+        written = remaining;
+    }
+    *offset = (unsigned char)(*offset + written);
+    if (*offset != *len) {
+        return false;
+    }
+    *offset = 0u;
+    *len = 0u;
+    return true;
+}
+
+static void raw_check_exit(at_obj_t *obj, at_info_t *ai, unsigned int size)
+{
+    unsigned int i;
+
+    if (obj->raw_conf->exit_cmd == NULL) {
+        return;
+    }
+    for (i = 0u; i < size; i++) {
+        if (ai->recv_cnt >= ai->recv_bufsize)
+            ai->recv_cnt = 0;
+        ai->recvbuf[ai->recv_cnt] = ai->raw_to_at[i];
+        if (ai->raw_to_at[i] == '\r' || ai->raw_to_at[i] == '\n') {
+            ai->recvbuf[ai->recv_cnt] = '\0';
+            ai->recv_cnt = 0;
+            if (strcasecmp(obj->raw_conf->exit_cmd, ai->recvbuf) == 0 &&
+                obj->raw_conf->on_exit != NULL) {
+                obj->raw_conf->on_exit();
+            }
+        } else {
+            ai->recv_cnt++;
+        }
+    }
+}
+
 /**
  * @brief  Data transparent transmission processing.
  */
 static void at_raw_trans_process(at_obj_t *obj)
 {
-    unsigned char rbuf[32];
     int size;
-    int i;
     at_info_t *ai = obj_map(obj);
     if (obj->raw_conf == NULL)
         return;
-    size = obj->adap->read(rbuf, sizeof(rbuf));
-    if (size > 0 ){
-        obj->raw_conf->write(rbuf, size);
+
+    if (raw_drain(obj->raw_conf->write, ai->raw_to_peer,
+                  &ai->raw_to_peer_offset, &ai->raw_to_peer_len)) {
+        size = obj->adap->read(ai->raw_to_peer, sizeof(ai->raw_to_peer));
+        if (size > 0) {
+            ai->raw_to_peer_len = (unsigned char)size;
+            (void)raw_drain(obj->raw_conf->write, ai->raw_to_peer,
+                            &ai->raw_to_peer_offset, &ai->raw_to_peer_len);
+        }
     }
-    size = obj->raw_conf->read(rbuf, sizeof(rbuf));
-    if (size > 0) {
-        obj->adap->write(rbuf, size);
-    } 
-    //Exit command detection
-    if (obj->raw_conf->exit_cmd != NULL) {
-        for (i = 0; i < size; i++) {
-            if (ai->recv_cnt >= ai->recv_bufsize)
-                ai->recv_cnt = 0;
-            ai->recvbuf[ai->recv_cnt] = rbuf[i];
-            if (rbuf[i] == '\r' || rbuf[i] == '\n') {
-                ai->recvbuf[ai->recv_cnt] = '\0';
-                ai->recv_cnt = 0;
-                if (strcasecmp(obj->raw_conf->exit_cmd, ai->recvbuf) != 0) {
-                    continue;
-                }
-                if (obj->raw_conf->on_exit) {
-                    obj->raw_conf->on_exit();
-                }
-            } else {
-                ai->recv_cnt++;
+
+    if (raw_drain(obj->adap->write, ai->raw_to_at,
+                  &ai->raw_to_at_offset, &ai->raw_to_at_len)) {
+        if (ai->raw_to_at_scan_len != 0u) {
+            unsigned int scan_len = ai->raw_to_at_scan_len;
+
+            ai->raw_to_at_scan_len = 0u;
+            raw_check_exit(obj, ai, scan_len);
+            if (!ai->raw_trans) {
+                return;
+            }
+        }
+        size = obj->raw_conf->read(ai->raw_to_at, sizeof(ai->raw_to_at));
+        if (size > 0) {
+            ai->raw_to_at_len = (unsigned char)size;
+            ai->raw_to_at_scan_len = (unsigned char)size;
+            if (raw_drain(obj->adap->write, ai->raw_to_at,
+                          &ai->raw_to_at_offset, &ai->raw_to_at_len)) {
+                ai->raw_to_at_scan_len = 0u;
+                raw_check_exit(obj, ai, (unsigned int)size);
             }
         }
     }
@@ -1353,10 +1566,19 @@ static void at_raw_trans_process(at_obj_t *obj)
  */
 void at_raw_transport_enter(at_obj_t *obj, const at_raw_trans_conf_t *conf)
 {
-    at_info_t *ai = obj_map(obj);
+    at_info_t *ai;
+    if (obj == NULL || conf == NULL || conf->read == NULL || conf->write == NULL) {
+        return;
+    }
+    ai = obj_map(obj);
     obj->raw_conf = conf;
     ai->raw_trans = 1;
     ai->recv_cnt  = 0;
+    ai->raw_to_peer_len = 0u;
+    ai->raw_to_peer_offset = 0u;
+    ai->raw_to_at_len = 0u;
+    ai->raw_to_at_offset = 0u;
+    ai->raw_to_at_scan_len = 0u;
 }
 
 /**
@@ -1364,8 +1586,17 @@ void at_raw_transport_enter(at_obj_t *obj, const at_raw_trans_conf_t *conf)
  */
 void at_raw_transport_exit(at_obj_t *obj)
 {
-    at_info_t *ai = obj_map(obj);
+    at_info_t *ai;
+    if (obj == NULL) {
+        return;
+    }
+    ai = obj_map(obj);
     ai->raw_trans = 0;
+    ai->raw_to_peer_len = 0u;
+    ai->raw_to_peer_offset = 0u;
+    ai->raw_to_at_len = 0u;
+    ai->raw_to_at_offset = 0u;
+    ai->raw_to_at_scan_len = 0u;
 }
 
 #endif
@@ -1420,7 +1651,7 @@ int at_prompt_send_step(at_env_t *env,
     switch (env->state) {
     case 1:
         if (env->contains(env, ">")) {
-            env->obj->adap->write(data, data_len);
+            if (env->write == NULL || !env->write(env, data, data_len)) return -1;
             env->recvclr(env);
             env->reset_timer(env);
             env->state = 2;

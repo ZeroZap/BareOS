@@ -323,8 +323,12 @@ static int work_sms_send(at_env_t *env)
     case 1:
         if (env->contains(env, ">")) {
             unsigned int tlen = (unsigned int)strlen(op->sms.text);
-            env->obj->adap->write(op->sms.text, tlen);
-            env->obj->adap->write(&ctrl_z, 1);
+            if (env->write == NULL ||
+                !env->write(env, op->sms.text, tlen) ||
+                !env->write(env, &ctrl_z, 1u)) {
+                OP_ERR(op, env);
+                break;
+            }
             env->recvclr(env);
             env->reset_timer(env);
             env->state = 2;

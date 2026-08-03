@@ -253,17 +253,42 @@ static unsigned s_fake_write_len = 0;
 static uint8_t s_fake_read_buf[512];
 static unsigned s_fake_read_len;
 static unsigned s_fake_read_pos;
+static unsigned int s_fake_write_script[16];
+static unsigned int s_fake_write_script_len;
+static unsigned int s_fake_write_script_pos;
+static unsigned int s_fake_rx_pending;
+static bool s_fake_tx_idle;
+#if AT_RAW_TRANSPARENT_EN
+static uint8_t s_peer_read_buf[64];
+static unsigned int s_peer_read_len;
+static unsigned int s_peer_read_pos;
+static uint8_t s_peer_write_buf[64];
+static unsigned int s_peer_write_len;
+static unsigned int s_peer_write_script[8];
+static unsigned int s_peer_write_script_len;
+static unsigned int s_peer_write_script_pos;
+static at_obj_t *s_raw_exit_obj;
+#endif
 static unsigned int fake_write(const void *data, unsigned int len)
 {
     unsigned int copy = len;
 
+    if (s_fake_write_script_pos < s_fake_write_script_len &&
+        copy > s_fake_write_script[s_fake_write_script_pos]) {
+        copy = s_fake_write_script[s_fake_write_script_pos];
+    }
+    if (s_fake_write_script_pos < s_fake_write_script_len) {
+        s_fake_write_script_pos++;
+    }
     if (copy > sizeof(s_fake_write_buf) - s_fake_write_len) {
         copy = (unsigned int)(sizeof(s_fake_write_buf) - s_fake_write_len);
     }
     memcpy(&s_fake_write_buf[s_fake_write_len], data, copy);
     s_fake_write_len += copy;
-    return len;
+    return copy;
 }
+static unsigned int fake_rx_pending(void) { return s_fake_rx_pending; }
+static bool fake_tx_idle(void) { return s_fake_tx_idle; }
 static unsigned int fake_read(void *data, unsigned int len)
 {
     unsigned int available = s_fake_read_len - s_fake_read_pos;
@@ -275,6 +300,44 @@ static unsigned int fake_read(void *data, unsigned int len)
     }
     return available;
 }
+
+#if AT_RAW_TRANSPARENT_EN
+static unsigned int fake_peer_write(const void *data, unsigned int len)
+{
+    unsigned int copy = len;
+
+    if (s_peer_write_script_pos < s_peer_write_script_len &&
+        copy > s_peer_write_script[s_peer_write_script_pos]) {
+        copy = s_peer_write_script[s_peer_write_script_pos];
+    }
+    if (s_peer_write_script_pos < s_peer_write_script_len) {
+        s_peer_write_script_pos++;
+    }
+    if (copy > sizeof(s_peer_write_buf) - s_peer_write_len) {
+        copy = (unsigned int)(sizeof(s_peer_write_buf) - s_peer_write_len);
+    }
+    memcpy(&s_peer_write_buf[s_peer_write_len], data, copy);
+    s_peer_write_len += copy;
+    return copy;
+}
+
+static unsigned int fake_peer_read(void *data, unsigned int len)
+{
+    unsigned int available = s_peer_read_len - s_peer_read_pos;
+
+    if (available > len) available = len;
+    if (available != 0u) {
+        memcpy(data, &s_peer_read_buf[s_peer_read_pos], available);
+        s_peer_read_pos += available;
+    }
+    return available;
+}
+
+static void fake_raw_exit(void)
+{
+    at_raw_transport_exit(s_raw_exit_obj);
+}
+#endif
 
 static at_adapter_t s_fake_adap = {
     .lock = NULL, .unlock = NULL,
@@ -290,6 +353,17 @@ static void fake_reset_io(void)
     s_fake_write_len = 0u;
     s_fake_read_len = 0u;
     s_fake_read_pos = 0u;
+    s_fake_write_script_len = 0u;
+    s_fake_write_script_pos = 0u;
+    s_fake_rx_pending = 0u;
+    s_fake_tx_idle = true;
+#if AT_RAW_TRANSPARENT_EN
+    s_peer_read_len = 0u;
+    s_peer_read_pos = 0u;
+    s_peer_write_len = 0u;
+    s_peer_write_script_len = 0u;
+    s_peer_write_script_pos = 0u;
+#endif
 }
 
 static void fake_inject(const char *data)
@@ -306,6 +380,8 @@ static bool fake_is_timeout(at_env_t *e, unsigned int ms)
 static void fake_println(at_env_t *e, const char *fmt, ...) { (void)e; (void)fmt; }
 static void fake_recvclr(at_env_t *e) { (void)e; s_recv_inject = ""; }
 static void fake_reset_timer(at_env_t *e) { (void)e; }
+static bool fake_env_write(at_env_t *e, const void *data, unsigned int len)
+{ (void)e; return fake_write(data, len) == len; }
 static void fake_finish(at_env_t *e, at_resp_code c)
 { (void)e; (void)c; s_state_done = 1; }
 
@@ -321,6 +397,7 @@ static void test_prompt_send_step(void)
     env.is_timeout   = fake_is_timeout;
     env.println      = fake_println;
     env.recvclr      = fake_recvclr;
+    env.write        = fake_env_write;
     env.reset_timer  = fake_reset_timer;
     env.finish       = fake_finish;
 
@@ -416,6 +493,33 @@ static void command_fixture_reset(void)
     s_callback_response[0] = '\0';
 }
 
+static int failing_println_work(at_env_t *env)
+{
+    static char oversized[AT_MAX_CMD_LEN + 1u];
+
+    if (env->state == 0) {
+        memset(oversized, 'X', AT_MAX_CMD_LEN);
+        oversized[AT_MAX_CMD_LEN] = '\0';
+        env->println(env, "%s", oversized);
+        env->state = 1;
+    } else {
+        env->finish(env, AT_RESP_ERROR);
+    }
+    return 0;
+}
+
+static int double_println_work(at_env_t *env)
+{
+    if (env->state == 0) {
+        env->println(env, "AT+FIRST");
+        env->println(env, "AT+SECOND");
+        env->state = 1;
+    } else {
+        env->finish(env, AT_RESP_OK);
+    }
+    return 0;
+}
+
 static at_obj_t *command_create_object(void)
 {
     static const at_adapter_t adapter = {
@@ -429,6 +533,8 @@ static at_obj_t *command_create_object(void)
         .urc_bufsize = 128u,
 #endif
         .recv_bufsize = 128u,
+        .rx_pending = fake_rx_pending,
+        .tx_idle = fake_tx_idle,
     };
 
     return at_obj_create(&adapter);
@@ -447,6 +553,16 @@ static unsigned int count_command_writes(const char *command)
 
 static void test_at_command_queue(void)
 {
+    TEST_CASE("AT create: rejects missing adapter callbacks") {
+        at_adapter_t adapter = {0};
+
+        command_fixture_reset();
+        TEST_TRUE(at_obj_create(NULL) == NULL);
+        TEST_TRUE(at_obj_create(&adapter) == NULL);
+        adapter.write = fake_write;
+        TEST_TRUE(at_obj_create(&adapter) == NULL);
+    }
+
     TEST_CASE("AT queue: command appends CRLF and accepts fragmented response") {
         at_attr_t attr;
         at_obj_t *at;
@@ -537,6 +653,262 @@ static void test_at_command_queue(void)
             TEST_EQ(s_callback_count, 1u);
             TEST_EQ(s_callback_code, AT_RESP_TIMEOUT);
             TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: short writes resume without loss or duplication") {
+        static const unsigned int script[] = {3u, 0u, 2u, 64u};
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        memcpy(s_fake_write_script, script, sizeof(script));
+        s_fake_write_script_len = sizeof(script) / sizeof(script[0]);
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.timeout = 50u;
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+LONG"));
+
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 3u);
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 3u);
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 5u);
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 9u);
+            TEST_MEM_EQ(s_fake_write_buf, "AT+LONG\r\n", 9u);
+
+            fake_inject("\r\nOK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: stalled write does not start response timeout") {
+        static const unsigned int script[] = {0u, 0u, 64u};
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        memcpy(s_fake_write_script, script, sizeof(script));
+        s_fake_write_script_len = sizeof(script) / sizeof(script[0]);
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.timeout = 10u;
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+STALL"));
+
+            at_obj_process(at);
+            xy_tick_advance(xy_tick_from_ms(100u));
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 0u);
+            TEST_TRUE(at_obj_busy(at));
+            TEST_FALSE(at_obj_pm_can_sleep(at));
+
+            at_obj_process(at);
+            TEST_MEM_EQ(s_fake_write_buf, "AT+STALL\r\n", 10u);
+            xy_tick_advance(xy_tick_from_ms(9u));
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 0u);
+            xy_tick_advance(xy_tick_from_ms(2u));
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_TIMEOUT);
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: rejects a formatted command at the length limit") {
+        char command[AT_MAX_CMD_LEN + 1u];
+        at_obj_t *at;
+
+        command_fixture_reset();
+        memset(command, 'A', AT_MAX_CMD_LEN);
+        command[AT_MAX_CMD_LEN] = '\0';
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            TEST_FALSE(at_exec_cmd(at, NULL, "%s", command));
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: rejects invalid single and multiline commands") {
+        char oversized[AT_MAX_CMD_LEN + 1u];
+        const char *multiline[] = {"AT", oversized, NULL};
+        at_obj_t *at;
+
+        command_fixture_reset();
+        memset(oversized, 'A', AT_MAX_CMD_LEN);
+        oversized[AT_MAX_CMD_LEN] = '\0';
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            TEST_FALSE(at_send_singlline(at, NULL, NULL));
+            TEST_FALSE(at_send_singlline(at, NULL, oversized));
+            TEST_FALSE(at_send_multiline(at, NULL, NULL));
+            TEST_FALSE(at_send_multiline(at, NULL, multiline));
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: mutated single line fails without staying busy") {
+        char command[AT_MAX_CMD_LEN + 1u] = "AT";
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            TEST_TRUE(at_send_singlline(at, &attr, command));
+            memset(command, 'A', AT_MAX_CMD_LEN);
+            command[AT_MAX_CMD_LEN] = '\0';
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_ERROR);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: failed custom println remains owned by its work") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            TEST_TRUE(at_do_work(at, NULL, failing_println_work));
+            at_obj_process(at);
+            TEST_TRUE(at_obj_busy(at));
+            at_obj_process(at);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: second custom println cannot overwrite pending line") {
+        static const unsigned int script[] = {3u, 0u, 64u};
+        at_obj_t *at;
+
+        command_fixture_reset();
+        memcpy(s_fake_write_script, script, sizeof(script));
+        s_fake_write_script_len = sizeof(script) / sizeof(script[0]);
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            TEST_TRUE(at_do_work(at, NULL, double_println_work));
+            at_obj_process(at);
+            at_obj_process(at);
+            at_obj_process(at);
+            TEST_MEM_EQ(s_fake_write_buf, "AT+FIRST\r\n", 10u);
+            TEST_EQ(s_fake_write_len, 10u);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+#if AT_RAW_TRANSPARENT_EN
+    TEST_CASE("AT raw: short writes resume in both directions") {
+        static const unsigned int script[] = {1u, 0u, 64u};
+        static const unsigned int peer_script[] = {2u, 0u, 64u};
+        static const at_raw_trans_conf_t raw = {
+            .exit_cmd = NULL,
+            .on_exit = NULL,
+            .write = fake_peer_write,
+            .read = fake_peer_read,
+        };
+        at_obj_t *at;
+
+        command_fixture_reset();
+        fake_inject("MODEM");
+        memcpy(s_peer_read_buf, "HOST", 4u);
+        s_peer_read_len = 4u;
+        memcpy(s_fake_write_script, script, sizeof(script));
+        s_fake_write_script_len = sizeof(script) / sizeof(script[0]);
+        memcpy(s_peer_write_script, peer_script, sizeof(peer_script));
+        s_peer_write_script_len = sizeof(peer_script) / sizeof(peer_script[0]);
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_raw_transport_enter(at, &raw);
+            for (unsigned int i = 0u; i < 5u; i++) at_obj_process(at);
+            TEST_EQ(s_peer_write_len, 5u);
+            TEST_MEM_EQ(s_peer_write_buf, "MODEM", 5u);
+            TEST_EQ(s_fake_write_len, 4u);
+            TEST_MEM_EQ(s_fake_write_buf, "HOST", 4u);
+            at_raw_transport_exit(at);
+            at_obj_destroy(at);
+        }
+    }
+
+
+    TEST_CASE("AT raw: exit waits until the current chunk is forwarded") {
+        static const unsigned int script[] = {3u, 0u, 64u};
+        static const at_raw_trans_conf_t raw = {
+            .exit_cmd = "EXIT",
+            .on_exit = fake_raw_exit,
+            .write = fake_peer_write,
+            .read = fake_peer_read,
+        };
+        at_obj_t *at;
+
+        command_fixture_reset();
+        memcpy(s_peer_read_buf, "PRE\rEXIT\r", 9u);
+        s_peer_read_len = 9u;
+        memcpy(s_fake_write_script, script, sizeof(script));
+        s_fake_write_script_len = sizeof(script) / sizeof(script[0]);
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            s_raw_exit_obj = at;
+            at_raw_transport_enter(at, &raw);
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 3u);
+            TEST_TRUE(at_obj_busy(at));
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 3u);
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 9u);
+            TEST_MEM_EQ(s_fake_write_buf, "PRE\rEXIT\r", 9u);
+            TEST_FALSE(at_obj_busy(at));
+            s_raw_exit_obj = NULL;
+            at_obj_destroy(at);
+        }
+    }
+#endif
+
+    TEST_CASE("AT PM: pending transport RX or TX rejects sleep") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            TEST_TRUE(at_obj_pm_can_sleep(at));
+            s_fake_rx_pending = 1u;
+            TEST_FALSE(at_obj_pm_can_sleep(at));
+            s_fake_rx_pending = 0u;
+            s_fake_tx_idle = false;
+            TEST_FALSE(at_obj_pm_can_sleep(at));
+            s_fake_tx_idle = true;
+            TEST_TRUE(at_obj_pm_can_sleep(at));
             at_obj_destroy(at);
         }
     }

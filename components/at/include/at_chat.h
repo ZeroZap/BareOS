@@ -183,6 +183,9 @@ typedef struct  {
 #endif    
     //Command response receiving buffer size, set according to the actual maximum command response length
     unsigned short recv_bufsize;
+    //Optional transport state queries used by PM sleep checks.
+    unsigned int (*rx_pending)(void);
+    bool (*tx_idle)(void);
 } at_adapter_t;
 
 /**
@@ -210,6 +213,9 @@ typedef struct at_env {
     unsigned int(*recvlen)(struct at_env *self);                  
     //Clear the receives buffer 
     void        (*recvclr)(struct at_env *self);
+    //Queue caller-owned bytes for resumable transmission. The buffer must remain
+    //valid until transmission completes; at most two non-empty segments may be queued.
+    bool        (*write)(struct at_env *self, const void *data, unsigned int len);
     //Indicates whether the current work has been abort
     bool        (*disposing)(struct at_env *self);
     //End the work and set the response code
@@ -285,7 +291,7 @@ void at_obj_destroy(at_obj_t *at);
 
 bool at_obj_busy(at_obj_t *at);
 
-/** PM sleep-check adapter: returns true when the AT object has no active work. */
+/** Returns true when AT work and the optional transport RX/TX state are idle. */
 bool at_obj_pm_can_sleep(void *arg);
 
 void at_obj_set_user_data(at_obj_t *at, void *user_data);
@@ -301,6 +307,12 @@ void at_obj_urc_set_enable(at_obj_t *at, int enable, unsigned short timeout);
 #endif
 
 void at_obj_process(at_obj_t *at);
+
+/**
+ * Queue caller-owned bytes for non-blocking transmission from a custom work.
+ * Prefer env->write(). The buffer must remain valid until transmission completes.
+ */
+bool at_env_write(at_env_t *env, const void *data, unsigned int len);
 
 void at_attr_deinit(at_attr_t *attr);
 

@@ -349,7 +349,11 @@ static int work_mqtt_publish(at_env_t *env)
         break;
     case 1:
         if (env->contains(env, ">")) {
-            env->obj->adap->write(op->mqtt_pub.topic, (unsigned int)tlen);
+            if (env->write == NULL ||
+                !env->write(env, op->mqtt_pub.topic, (unsigned int)tlen)) {
+                OP_ERR(op, env);
+                break;
+            }
             env->recvclr(env);
             env->reset_timer(env);
             env->state = 2;
@@ -370,8 +374,12 @@ static int work_mqtt_publish(at_env_t *env)
         break;
     case 3:
         if (env->contains(env, ">")) {
-            env->obj->adap->write(op->mqtt_pub.payload,
-                                  (unsigned int)op->mqtt_pub.len);
+            if (env->write == NULL ||
+                !env->write(env, op->mqtt_pub.payload,
+                            (unsigned int)op->mqtt_pub.len)) {
+                OP_ERR(op, env);
+                break;
+            }
             env->recvclr(env);
             env->reset_timer(env);
             env->state = 4;
@@ -416,7 +424,11 @@ static int work_mqtt_subscribe(at_env_t *env)
         break;
     case 1:
         if (env->contains(env, ">")) {
-            env->obj->adap->write(op->mqtt_sub.topic, (unsigned int)tlen);
+            if (env->write == NULL ||
+                !env->write(env, op->mqtt_sub.topic, (unsigned int)tlen)) {
+                OP_ERR(op, env);
+                break;
+            }
             env->recvclr(env);
             env->reset_timer(env);
             env->state = 2;

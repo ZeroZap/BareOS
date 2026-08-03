@@ -9,7 +9,7 @@
 - `AT_WORK_STATIC_POOL_EN=1` 默认启用。
 - `work_item_t` 从静态固定块池分配。
 - 命令完成后只归还静态块，不释放堆。
-- `at_exec_cmd()` 和 `env->println()` 的格式化临时缓冲区使用栈上 `char[AT_MAX_CMD_LEN]`。
+- `at_exec_cmd()` 使用栈上格式化缓冲区，`env->println()` 使用 AT 对象内的持久发送缓冲区。
 
 仍然会在 `at_obj_create()` 初始化阶段分配对象级缓冲区：
 
@@ -70,6 +70,7 @@ while (1) {
 
 - `read()` 从 UART RX ring buffer 读取当前已有数据；无数据返回 0。
 - `write()` 建议写入 UART TX ring buffer 或 DMA 队列后立即返回。
+- `write()` 返回本次实际接收的字节数；允许短写或返回 0，AT 组件会在后续轮询续传。
 - 不要在 `read()` 或 `write()` 内等待 AT 响应。
 - 不要在 ISR 内调用 `at_obj_process()`。
 
@@ -160,6 +161,10 @@ static int work_modem_init(at_env_t *env)
 }
 ```
 
+自定义状态机发送 prompt 后的 payload 时使用 `env->write()`，不要直接调用
+`env->obj->adap->write()`。一次 handler 调用最多排入两个非空数据段；组件只保存
+数据指针，因此 payload 缓冲区必须保持有效且内容不变，直到发送完成。
+
 ## URC 使用
 
 URC 表应为静态常驻对象：
@@ -187,13 +192,13 @@ at_obj_set_urc(g_at_4g, s_urc_tbl, sizeof(s_urc_tbl) / sizeof(s_urc_tbl[0]));
 
 - `g_sys_tick_ms` 已由 SysTick 1 ms 递增。
 - UART RX ring buffer 在最大 URC burst 下不会溢出。
-- `write()` 能接受 AT 命令最大长度，或上层不发送超过 TX ring 可容纳的数据。
+- `write()` 正确返回实际接收长度，并能在 TX ring 满时返回 0。
 - `AT_LIST_WORK_COUNT` 与单个 AT 对象并发入队数量一致。
 - `AT_WORK_POOL_COUNT` 与全系统 AT 并发 work 数一致。
 - `AT_WORK_ITEM_DATA_SIZE` 覆盖最大 `at_send_data()` payload。
 - `recv_bufsize` 覆盖最长命令响应。
 - `urc_bufsize` 覆盖最长 URC 帧。
-- 低功耗 STOP 前确认 `at_obj_busy()` 为 false，或确认 UART/定时器可唤醒继续处理。
+- 低功耗 STOP 前使用 `at_obj_pm_can_sleep()`，并按需实现 adapter 的 `rx_pending` 和 `tx_idle`。
 
 ## PLB-N32 preparation scaffold
 

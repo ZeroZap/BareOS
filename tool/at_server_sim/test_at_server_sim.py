@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import unittest
 
 from at_server_sim import ATServerSimulator, SimulatorConfig
@@ -31,6 +32,19 @@ class ATServerSimulatorTests(unittest.TestCase):
         self.assertEqual(simulator.payloads, [b"A\x00B\r\n"])
         self.assertEqual(simulator.commands, ["AT+QISEND=0,5", "AT"])
         self.assertEqual(b"".join(writes), b">\r\nSEND OK\r\n\r\nOK\r\n")
+
+    def test_stress_payload_pattern_hash(self) -> None:
+        simulator, _ = self.make_simulator()
+        payload = bytes((index * 31 + 7) & 0xFF for index in range(1024))
+        simulator.feed(b"AT+QISEND=0,1024\r\n")
+        for offset in range(0, len(payload), 37):
+            simulator.feed(payload[offset : offset + 37])
+        self.assertEqual(len(simulator.payloads), 1)
+        self.assertEqual(len(simulator.payloads[0]), 1024)
+        self.assertEqual(
+            hashlib.sha256(simulator.payloads[0]).hexdigest(),
+            hashlib.sha256(payload).hexdigest(),
+        )
 
     def test_qisend_accepts_cr_only_before_immediate_payload(self) -> None:
         simulator, _ = self.make_simulator()

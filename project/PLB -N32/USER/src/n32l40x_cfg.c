@@ -240,7 +240,7 @@ unsigned int n32_uart5_write_nonblock(const void *data, unsigned int len)
     unsigned int written = 0u;
     uint32_t key;
 
-    if (bytes == NULL) {
+    if (bytes == NULL || len == 0u) {
         return 0u;
     }
     while (written < len && xy_rb_putchar(&s_uart5_tx_rb, bytes[written]) != 0u) {
@@ -253,9 +253,31 @@ unsigned int n32_uart5_write_nonblock(const void *data, unsigned int len)
     return written;
 }
 
+unsigned int n32_uart5_rx_pending(void)
+{
+    uint32_t key = xy_hal_irq_save();
+    unsigned int pending = (unsigned int)xy_rb_data_len(&s_uart5_rx_rb);
+
+    if (USART_GetFlagStatus(UART5, USART_FLAG_RXDNE) == SET) {
+        pending++;
+    }
+    xy_hal_irq_restore(key);
+    return pending;
+}
+
+bool n32_uart5_tx_idle(void)
+{
+    uint32_t key = xy_hal_irq_save();
+    bool idle = xy_rb_data_len(&s_uart5_tx_rb) == 0u &&
+                USART_GetFlagStatus(UART5, USART_FLAG_TXC) == SET;
+
+    xy_hal_irq_restore(key);
+    return idle;
+}
+
 void n32_uart5_secboot_poll(void)
 {
-    g_n32_uart5_rb_pending = (uint32_t)xy_rb_data_len(&s_uart5_rx_rb);
+    g_n32_uart5_rb_pending = n32_uart5_rx_pending();
 }
 
 int n32_uart5_secboot_read(uint8_t *data, size_t len, uint32_t timeout_ms)
@@ -280,7 +302,7 @@ int n32_uart5_secboot_read(uint8_t *data, size_t len, uint32_t timeout_ms)
         IWDG_ReloadKey();
     }
 
-    g_n32_uart5_rb_pending = (uint32_t)xy_rb_data_len(&s_uart5_rx_rb);
+    g_n32_uart5_rb_pending = n32_uart5_rx_pending();
     return (int)count;
 }
 
