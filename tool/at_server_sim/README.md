@@ -281,6 +281,54 @@ PLB-N32 AT selftest PASSED
 结论：两段 TX queue 在真实 UART 短写和 ring 饱和条件下维持严格 FIFO，覆盖了
 SMS 正文加 Ctrl-Z 的核心发送模型。
 
+### 部分发送中止验证
+
+`AT_SELFTEST_ABORT=y` 在 1024 字节 payload 首次真实短写后调用
+`at_work_abort_all()`。AT 核心应丢弃尚未提交 UART ring 的尾部，但已经被 adapter
+接受的前缀仍会由 UART 硬件发送完成。板端只有在 work queue 清空且 transport
+`tx_idle` 后才输出通过。
+
+构建 counter39 包：
+
+```powershell
+make -C "project/PLB -N32/Makefile" clean
+make -C "project/PLB -N32/Makefile" package AT_SELFTEST_ABORT=y SECBOOT_IMAGE_VERSION=5 SECBOOT_SECURITY_COUNTER=39 SECBOOT_PACKAGE=build/PLB_at_abort_counter39.sbp
+```
+
+模拟器要求收到非空但不完整的确定性 payload 前缀，长度不超过 512 字节：
+
+```powershell
+python "tool/at_server_sim/at_server_sim.py" --port COM24 --baud 115200 --profile ec2x --duration 12 --expect-command "^AT$" --expect-command "^AT\+CSQ$" --expect-command "^AT\+CEREG\?$" --expect-command "^AT\+QISEND=0,1024$" --expect-partial-payload-max 512 --expect-partial-stress-pattern
+```
+
+板端通过日志：
+
+```text
+PLB-N32 AT selftest abort requested accepted=...
+PLB-N32 AT selftest ABORT PASSED accepted=... calls=... short=... zero=...
+```
+
+`accepted` 必须大于 0 且小于 1024。模拟器不得收到完整 payload，也不得出现
+`SEND OK`；heartbeat 最终应为 `rb=0 drop=0 locks=0/0/0/0` 并恢复 STOP2。
+
+### 2026-08-03 counter39 验证记录
+
+验证包：`PLB_at_abort_counter39.sbp`，`image_version=5`，
+`security_counter=39`。
+
+| 项目 | 结果 |
+|---|---|
+| 首次真实短写后 abort | 通过 |
+| 已接收前缀发送完成 | 通过，模拟器收到非空确定性前缀 |
+| 未提交 payload 尾部 | 通过，未继续泄漏且未形成完整 payload |
+| payload 前缀上限 | 通过，不超过 UART5 512 字节 TX ring |
+| work queue 清理 | 通过，abort 后未重新排入 QISEND |
+| transport idle 判定 | 通过，物理 TX 完成后才输出 `ABORT PASSED` |
+| UART/PM 收尾 | 通过，ring 清空、无 drop、无锁泄漏并恢复 STOP2 |
+
+结论：运行中 abort 能清除 AT 内部待发送尾部，同时允许 adapter 已接收字节安全排空；
+work busy 和 PM transport 状态最终恢复，不会在后续轮询泄漏旧 payload。
+
 ## 建议的板端验证顺序
 
 1. 显式调用 `plb_n32_at_init()`，并在主循环持续调用 `plb_n32_at_process()`。

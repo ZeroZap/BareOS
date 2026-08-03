@@ -33,6 +33,10 @@ def format_bytes(data: bytes) -> str:
     return text.replace("\r", "\\r").replace("\n", "\\n")
 
 
+def matches_stress_pattern(data: bytes) -> bool:
+    return all(value == ((index * 31 + 7) & 0xFF) for index, value in enumerate(data))
+
+
 @dataclass
 class SimulatorConfig:
     profile: str = "ec2x"
@@ -282,6 +286,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expect-payload-size", type=int, help="require one payload with this exact size")
     parser.add_argument("--expect-payload-sha256", help="require one payload with this SHA-256 hex digest")
     parser.add_argument("--expect-payload-suffix-hex", help="require payload to end with these hex bytes")
+    parser.add_argument("--expect-partial-payload-max", type=int, help="require an incomplete payload no larger than N bytes")
+    parser.add_argument("--expect-partial-stress-pattern", action="store_true", help="require partial payload to match the deterministic stress prefix")
     return parser.parse_args()
 
 
@@ -366,6 +372,21 @@ def run(args: argparse.Namespace) -> int:
         ) or "none"
         print(f"Expected payload not received; actual: {actual}", file=sys.stderr)
         return 1
+    if args.expect_partial_payload_max is not None or args.expect_partial_stress_pattern:
+        partial = bytes(simulator.raw_buffer)
+        if not partial or simulator.raw_remaining == 0:
+            print("Expected an incomplete payload, but none was pending", file=sys.stderr)
+            return 1
+        if args.expect_partial_payload_max is not None and len(partial) > args.expect_partial_payload_max:
+            print(f"Partial payload too large: {len(partial)}", file=sys.stderr)
+            return 1
+        if args.expect_partial_stress_pattern and not matches_stress_pattern(partial):
+            print("Partial payload does not match stress pattern prefix", file=sys.stderr)
+            return 1
+        print(
+            f"Partial payload: len={len(partial)} remaining={simulator.raw_remaining} "
+            f"sha256={hashlib.sha256(partial).hexdigest()}"
+        )
     print(f"Summary: {len(simulator.commands)} commands, {len(simulator.payloads)} payloads")
     return 0
 

@@ -7,7 +7,7 @@ import re
 import hashlib
 import unittest
 
-from at_server_sim import ATServerSimulator, SimulatorConfig
+from at_server_sim import ATServerSimulator, SimulatorConfig, matches_stress_pattern
 
 
 class ATServerSimulatorTests(unittest.TestCase):
@@ -54,6 +54,16 @@ class ATServerSimulatorTests(unittest.TestCase):
         simulator.feed(b"\x1a")
         self.assertEqual(simulator.payloads, [body + b"\x1a"])
         self.assertTrue(simulator.payloads[0].endswith(b"\x1a"))
+
+    def test_aborted_stress_payload_remains_a_valid_prefix(self) -> None:
+        simulator, _ = self.make_simulator()
+        body = bytes((index * 31 + 7) & 0xFF for index in range(1024))
+        simulator.feed(b"AT+QISEND=0,1024\r\n")
+        simulator.feed(body[:511])
+        self.assertEqual(simulator.payloads, [])
+        self.assertEqual(simulator.raw_remaining, 513)
+        self.assertTrue(matches_stress_pattern(bytes(simulator.raw_buffer)))
+        self.assertFalse(matches_stress_pattern(bytes(simulator.raw_buffer[:-1]) + b"\x00"))
 
     def test_qisend_accepts_cr_only_before_immediate_payload(self) -> None:
         simulator, _ = self.make_simulator()

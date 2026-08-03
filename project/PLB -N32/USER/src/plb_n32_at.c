@@ -19,6 +19,10 @@
 #define PLB_N32_AT_SELFTEST_SEGMENTED 0
 #endif
 
+#ifndef PLB_N32_AT_SELFTEST_ABORT
+#define PLB_N32_AT_SELFTEST_ABORT 0
+#endif
+
 XY_MEM_POOL_DECLARE(s_at_mem, 2048u);
 
 static at_obj_t *s_at;
@@ -36,6 +40,12 @@ static unsigned int s_selftest_tx_calls;
 static unsigned int s_selftest_tx_short_writes;
 static unsigned int s_selftest_tx_zero_writes;
 static bool s_selftest_measure_tx;
+#if PLB_N32_AT_SELFTEST_ABORT
+static bool s_selftest_abort_armed;
+static bool s_selftest_abort_requested;
+static bool s_selftest_abort_wait_idle;
+static unsigned int s_selftest_abort_accepted;
+#endif
 static bool s_selftest_active;
 static bool s_selftest_waiting;
 static bool s_selftest_urc_received;
@@ -109,6 +119,33 @@ static int plb_n32_at_selftest_send_work(at_env_t *env)
         env->state = 1;
         return 0;
     }
+#if PLB_N32_AT_SELFTEST_ABORT
+    if (env->state == 1) {
+        if (env->contains(env, ">")) {
+            s_selftest_abort_armed = true;
+            if (env->write == NULL ||
+                !env->write(env, s_selftest_payload,
+                            (unsigned int)sizeof(s_selftest_payload))) {
+                s_selftest_active = false;
+                s_selftest_abort_armed = false;
+                s_selftest_measure_tx = false;
+                xy_log_w("PLB-N32 AT selftest FAILED reason=ABORT_QUEUE");
+                env->finish(env, AT_RESP_ERROR);
+                return 0;
+            }
+            env->recvclr(env);
+            env->reset_timer(env);
+            env->state = 2;
+        } else if (env->is_timeout(env, 5000u)) {
+            s_selftest_active = false;
+            s_selftest_measure_tx = false;
+            xy_log_w("PLB-N32 AT selftest FAILED command=AT+QISEND");
+            env->finish(env, AT_RESP_ERROR);
+        }
+        return 0;
+    }
+    return 0;
+#endif
 #if PLB_N32_AT_SELFTEST_SEGMENTED
     if (env->state == 1) {
         if (env->contains(env, ">")) {
@@ -204,6 +241,15 @@ static unsigned int plb_n32_at_write(const void *buf, unsigned int len)
         if (written == 0u && len != 0u) {
             s_selftest_tx_zero_writes++;
         }
+#if PLB_N32_AT_SELFTEST_ABORT
+        if (s_selftest_abort_armed) {
+            s_selftest_abort_accepted += written;
+            if (written < len) {
+                s_selftest_abort_requested = true;
+                s_selftest_abort_armed = false;
+            }
+        }
+#endif
     }
 #endif
     return written;
@@ -265,6 +311,12 @@ bool plb_n32_at_selftest_start(void)
     s_selftest_tx_short_writes = 0u;
     s_selftest_tx_zero_writes = 0u;
     s_selftest_measure_tx = false;
+#if PLB_N32_AT_SELFTEST_ABORT
+    s_selftest_abort_armed = false;
+    s_selftest_abort_requested = false;
+    s_selftest_abort_wait_idle = false;
+    s_selftest_abort_accepted = 0u;
+#endif
     if (sizeof(s_selftest_payload) == 11u) {
         memcpy(s_selftest_payload, "PLB-AT-DATA", 11u);
     } else {
@@ -285,7 +337,32 @@ void plb_n32_at_process(void)
     if (s_at != NULL) {
         at_obj_process(s_at);
 #if PLB_N32_ENABLE_AT_SELFTEST
-        if (s_selftest_active && !s_selftest_waiting) {
+#if PLB_N32_AT_SELFTEST_ABORT
+        if (s_selftest_abort_requested) {
+            s_selftest_abort_requested = false;
+            at_work_abort_all(s_at);
+            s_selftest_abort_wait_idle = true;
+            s_selftest_waiting = false;
+            xy_log_i("PLB-N32 AT selftest abort requested accepted=%u",
+                     s_selftest_abort_accepted);
+        }
+        if (s_selftest_abort_wait_idle && !at_obj_busy(s_at) &&
+            at_obj_pm_can_sleep(s_at)) {
+            s_selftest_abort_wait_idle = false;
+            s_selftest_active = false;
+            s_selftest_measure_tx = false;
+            xy_log_i("PLB-N32 AT selftest ABORT PASSED accepted=%u calls=%u short=%u zero=%u",
+                     s_selftest_abort_accepted,
+                     s_selftest_tx_calls,
+                     s_selftest_tx_short_writes,
+                     s_selftest_tx_zero_writes);
+        }
+#endif
+        if (s_selftest_active && !s_selftest_waiting
+#if PLB_N32_AT_SELFTEST_ABORT
+            && !s_selftest_abort_wait_idle
+#endif
+        ) {
             at_attr_t attr;
             unsigned int command_count =
                 sizeof(s_selftest_commands) / sizeof(s_selftest_commands[0]);
