@@ -505,6 +505,190 @@ static void test_rtu_nonblocking_master(void) {
            MB_TINY_CRC_ERROR);
 }
 
+static void test_rtu_master_convenience(void) {
+  mb_tiny_rtu_rx_queue_t queue;
+  mb_tiny_rtu_rx_slot_t slots[32];
+  mb_tiny_rtu_rx_t rx;
+  mb_tiny_rtu_tx_t tx;
+  mb_tiny_rtu_master_t master;
+  uint16_t registers[2] = {0U, 0U};
+  uint16_t write_registers[2] = {0x1234U, 0x5678U};
+  uint8_t bits[2] = {0U, 0U};
+  uint8_t write_bits[2] = {0xA5U, 0xFFU};
+  uint8_t response[16];
+  uint16_t response_len;
+
+  CHECK_EQ(mb_tiny_rtu_rx_queue_init(&queue, slots, 32U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_init(&rx, 4U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_tx_init(&tx, async_tx_start, rs485_set_de, 20U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_init(&master, &queue, &rx, &tx, 50U), MB_TINY_OK);
+  g_async_tx_mode = 0;
+  g_de_mode = 0;
+
+  CHECK_EQ(
+      mb_tiny_rtu_master_read_holding_start(&master, 1U, 0x0010U, 2U, 100U),
+      MB_TINY_OK);
+  CHECK_EQ(g_async_tx_len, 8U);
+  CHECK_EQ(g_async_tx_data[1], MB_FUNC_READ_HOLDING);
+  CHECK_EQ(g_async_tx_data[3], 0x10U);
+  CHECK_EQ(g_async_tx_data[5], 2U);
+  CHECK_EQ(
+      mb_tiny_crc16(g_async_tx_data, 6U),
+      (uint16_t)(g_async_tx_data[6] | ((uint16_t)g_async_tx_data[7] << 8U)));
+  response[0] = 1U;
+  response[1] = MB_FUNC_READ_HOLDING;
+  response[2] = 4U;
+  response[3] = 0x12U;
+  response[4] = 0x34U;
+  response[5] = 0x56U;
+  response[6] = 0x78U;
+  response_len = append_crc(response, 7U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 101U, 110U, 125U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_read_holding_result(&master, registers, 1U),
+           MB_TINY_BUFFER_TOO_SMALL);
+  CHECK_EQ(mb_tiny_rtu_master_read_holding_result(&master, registers, 2U),
+           MB_TINY_OK);
+  CHECK_EQ(registers[0], 0x1234U);
+  CHECK_EQ(registers[1], 0x5678U);
+  CHECK_EQ(mb_tiny_rtu_master_read_input_result(&master, registers, 2U),
+           MB_TINY_FRAME_ERROR);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_read_input_start(&master, 2U, 3U, 1U, 200U),
+           MB_TINY_OK);
+  response[0] = 2U;
+  response[1] = MB_FUNC_READ_INPUT;
+  response[2] = 3U;
+  response[3] = 0xABU;
+  response[4] = 0xCDU;
+  response[5] = 0xEFU;
+  response_len = append_crc(response, 6U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 201U, 210U, 225U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_read_input_result(&master, registers, 2U),
+           MB_TINY_FRAME_ERROR);
+  master.response[2] = 2U;
+  master.response_len = append_crc(master.response, 5U);
+  CHECK_EQ(mb_tiny_rtu_master_read_input_result(&master, registers, 1U),
+           MB_TINY_OK);
+  CHECK_EQ(registers[0], 0xABCDU);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_read_coils_start(&master, 1U, 0U, 10U, 300U),
+           MB_TINY_OK);
+  response[0] = 1U;
+  response[1] = MB_FUNC_READ_COILS;
+  response[2] = 2U;
+  response[3] = 0xA5U;
+  response[4] = 0xFFU;
+  response_len = append_crc(response, 5U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 301U, 310U, 325U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_read_coils_result(&master, bits, 1U),
+           MB_TINY_BUFFER_TOO_SMALL);
+  CHECK_EQ(mb_tiny_rtu_master_read_coils_result(&master, bits, 2U), MB_TINY_OK);
+  CHECK_EQ(bits[0], 0xA5U);
+  CHECK_EQ(bits[1], 0x03U);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_read_discrete_start(&master, 1U, 7U, 8U, 400U),
+           MB_TINY_OK);
+  response[0] = 1U;
+  response[1] = MB_FUNC_READ_DISCRETE;
+  response[2] = 1U;
+  response[3] = 0x5AU;
+  response_len = append_crc(response, 4U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 401U, 410U, 425U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_read_discrete_result(&master, bits, 1U),
+           MB_TINY_OK);
+  CHECK_EQ(bits[0], 0x5AU);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(
+      mb_tiny_rtu_master_write_reg_start(&master, 1U, 0x20U, 0xBEEFU, 500U),
+      MB_TINY_OK);
+  memcpy(response, g_async_tx_data, 6U);
+  response_len = append_crc(response, 6U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 501U, 510U, 525U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_write_reg_result(&master), MB_TINY_OK);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_write_coil_start(&master, 1U, 9U, 0xFF00U, 600U),
+           MB_TINY_OK);
+  memcpy(response, g_async_tx_data, 6U);
+  response_len = append_crc(response, 6U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 601U, 610U, 625U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_write_coil_result(&master), MB_TINY_OK);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_write_regs_start(&master, 1U, 0x30U, 2U,
+                                               write_registers, 700U),
+           MB_TINY_OK);
+  CHECK_EQ(g_async_tx_len, 13U);
+  CHECK_EQ(g_async_tx_data[6], 4U);
+  CHECK_EQ(g_async_tx_data[7], 0x12U);
+  CHECK_EQ(g_async_tx_data[10], 0x78U);
+  memcpy(response, g_async_tx_data, 6U);
+  response_len = append_crc(response, 6U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 701U, 710U, 725U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_master_write_regs_result(&master), MB_TINY_OK);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_write_coils_start(&master, 1U, 0x40U, 10U,
+                                                write_bits, 800U),
+           MB_TINY_OK);
+  CHECK_EQ(g_async_tx_len, 11U);
+  CHECK_EQ(g_async_tx_data[6], 2U);
+  CHECK_EQ(g_async_tx_data[7], 0xA5U);
+  CHECK_EQ(g_async_tx_data[8], 0x03U);
+  memcpy(response, g_async_tx_data, 6U);
+  response_len = append_crc(response, 6U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 801U, 810U, 825U),
+           MB_TINY_OK);
+  response[5] = 9U;
+  memcpy(master.response, response, 6U);
+  master.response_len = append_crc(master.response, 6U);
+  CHECK_EQ(mb_tiny_rtu_master_write_coils_result(&master), MB_TINY_FRAME_ERROR);
+  memcpy(master.response, g_async_tx_data, 6U);
+  master.response_len = append_crc(master.response, 6U);
+  CHECK_EQ(mb_tiny_rtu_master_write_coils_result(&master), MB_TINY_OK);
+  mb_tiny_rtu_master_reset(&master);
+
+  CHECK_EQ(mb_tiny_rtu_master_read_holding_start(&master, 1U, 0U, 0U, 900U),
+           MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_master_write_coil_start(&master, 1U, 0U, 1U, 900U),
+           MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_master_write_regs_start(&master, 1U, 0U, 1U, NULL, 900U),
+           MB_TINY_INVALID_PARAM);
+
+  CHECK_EQ(mb_tiny_rtu_master_read_holding_start(&master, 1U, 0U, 1U, 910U),
+           MB_TINY_OK);
+  response[0] = 1U;
+  response[1] = (uint8_t)(MB_FUNC_READ_HOLDING | 0x80U);
+  response[2] = MB_ERR_DEVICE_BUSY;
+  response_len = append_crc(response, 3U);
+  CHECK_EQ(complete_master_with_response(&master, &queue, &tx, response,
+                                         response_len, 911U, 920U, 935U),
+           MB_TINY_EXCEPTION);
+  CHECK_EQ(mb_tiny_rtu_master_read_holding_result(&master, registers, 2U),
+           MB_TINY_EXCEPTION);
+  mb_tiny_rtu_master_reset(&master);
+}
+
 static void test_rtu_slave_service(void) {
   mb_tiny_slave_t slave;
   mb_tiny_rtu_rx_queue_t queue;
@@ -1136,6 +1320,7 @@ int main(void) {
   test_rtu_receive_queue();
   test_rtu_nonblocking_tx();
   test_rtu_nonblocking_master();
+  test_rtu_master_convenience();
   test_rtu_slave_service();
   test_slave_registers_and_limits();
   test_slave_coil_alignment_and_validation();

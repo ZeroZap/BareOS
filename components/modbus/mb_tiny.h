@@ -189,6 +189,9 @@ typedef struct {
   uint8_t slave_id;
   uint8_t function;
   uint8_t last_exception;
+  uint16_t request_addr;
+  uint16_t request_value;
+  bool typed_request;
   int result;
   mb_tiny_rtu_master_state_t state;
   uint32_t completed_count;
@@ -322,6 +325,51 @@ int mb_tiny_rtu_master_get_response(const mb_tiny_rtu_master_t *master,
 int mb_tiny_rtu_master_abort(mb_tiny_rtu_master_t *master);
 void mb_tiny_rtu_master_reset(mb_tiny_rtu_master_t *master);
 bool mb_tiny_rtu_master_is_idle(const mb_tiny_rtu_master_t *master);
+
+/** Function-specific non-blocking request starters. */
+int mb_tiny_rtu_master_read_holding_start(mb_tiny_rtu_master_t *master,
+                                          uint8_t slave_id, uint16_t addr,
+                                          uint16_t count, uint32_t now_ms);
+int mb_tiny_rtu_master_read_input_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t count, uint32_t now_ms);
+int mb_tiny_rtu_master_read_coils_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t count, uint32_t now_ms);
+int mb_tiny_rtu_master_read_discrete_start(mb_tiny_rtu_master_t *master,
+                                           uint8_t slave_id, uint16_t addr,
+                                           uint16_t count, uint32_t now_ms);
+int mb_tiny_rtu_master_write_reg_start(mb_tiny_rtu_master_t *master,
+                                       uint8_t slave_id, uint16_t addr,
+                                       uint16_t value, uint32_t now_ms);
+int mb_tiny_rtu_master_write_coil_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t value, uint32_t now_ms);
+int mb_tiny_rtu_master_write_regs_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t count, const uint16_t *data,
+                                        uint32_t now_ms);
+int mb_tiny_rtu_master_write_coils_start(mb_tiny_rtu_master_t *master,
+                                         uint8_t slave_id, uint16_t addr,
+                                         uint16_t count, const uint8_t *data,
+                                         uint32_t now_ms);
+
+/** Decode and strictly validate a completed function-specific response. */
+int mb_tiny_rtu_master_read_holding_result(const mb_tiny_rtu_master_t *master,
+                                           uint16_t *data,
+                                           uint16_t data_capacity);
+int mb_tiny_rtu_master_read_input_result(const mb_tiny_rtu_master_t *master,
+                                         uint16_t *data,
+                                         uint16_t data_capacity);
+int mb_tiny_rtu_master_read_coils_result(const mb_tiny_rtu_master_t *master,
+                                         uint8_t *data, uint16_t data_capacity);
+int mb_tiny_rtu_master_read_discrete_result(const mb_tiny_rtu_master_t *master,
+                                            uint8_t *data,
+                                            uint16_t data_capacity);
+int mb_tiny_rtu_master_write_reg_result(const mb_tiny_rtu_master_t *master);
+int mb_tiny_rtu_master_write_coil_result(const mb_tiny_rtu_master_t *master);
+int mb_tiny_rtu_master_write_regs_result(const mb_tiny_rtu_master_t *master);
+int mb_tiny_rtu_master_write_coils_result(const mb_tiny_rtu_master_t *master);
 
 /* ==================== Slave API ==================== */
 

@@ -486,6 +486,7 @@ void mb_tiny_rtu_master_reset(mb_tiny_rtu_master_t *master) {
       master->state == MB_TINY_RTU_MASTER_DONE) {
     master->response_len = 0U;
     master->last_exception = 0U;
+    master->typed_request = false;
     master->result = MB_TINY_OK;
     master->state = MB_TINY_RTU_MASTER_IDLE;
   }
@@ -532,6 +533,7 @@ int mb_tiny_rtu_master_start(mb_tiny_rtu_master_t *master,
   master->function = request[1];
   master->last_exception = 0U;
   master->response_len = 0U;
+  master->typed_request = false;
   master->result = MB_TINY_BUSY;
   ret = mb_tiny_rtu_tx_start(master->tx, request, request_len, now_ms);
   if (ret != MB_TINY_OK) {
@@ -561,6 +563,7 @@ int mb_tiny_rtu_master_abort(mb_tiny_rtu_master_t *master) {
   master->queue->handled_dropped_bytes = master->queue->dropped_bytes;
   master->response_len = 0U;
   master->last_exception = 0U;
+  master->typed_request = false;
   master->result = ret;
   master->state = MB_TINY_RTU_MASTER_IDLE;
   return ret;
@@ -653,6 +656,321 @@ int mb_tiny_rtu_master_get_response(const mb_tiny_rtu_master_t *master,
   memcpy(response, master->response, master->response_len);
   *response_len = master->response_len;
   return master->result;
+}
+
+static int mb_tiny_rtu_master_prepare_request(mb_tiny_rtu_master_t *master,
+                                              uint8_t slave_id) {
+  if (master == NULL || !mb_unit_id_is_valid(slave_id)) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (master->state != MB_TINY_RTU_MASTER_IDLE) {
+    return MB_TINY_BUSY;
+  }
+  return MB_TINY_OK;
+}
+
+static int mb_tiny_rtu_master_start_fixed(mb_tiny_rtu_master_t *master,
+                                          uint8_t slave_id, uint8_t function,
+                                          uint16_t address, uint16_t value,
+                                          uint32_t now_ms) {
+  int ret;
+
+  ret = mb_tiny_rtu_master_prepare_request(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  master->response[0] = slave_id;
+  master->response[1] = function;
+  mb_put_u16_be(&master->response[2], address);
+  mb_put_u16_be(&master->response[4], value);
+  mb_append_crc(master->response, 6U);
+  ret = mb_tiny_rtu_master_start(master, master->response, 8U, now_ms);
+  if (ret == MB_TINY_OK) {
+    master->request_addr = address;
+    master->request_value = value;
+    master->typed_request = true;
+  }
+  return ret;
+}
+
+static int mb_tiny_rtu_master_read_start(mb_tiny_rtu_master_t *master,
+                                         uint8_t slave_id, uint8_t function,
+                                         uint16_t addr, uint16_t count,
+                                         uint16_t max_count, uint32_t now_ms) {
+  if (count == 0U || count > max_count) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  return mb_tiny_rtu_master_start_fixed(master, slave_id, function, addr, count,
+                                        now_ms);
+}
+
+int mb_tiny_rtu_master_read_holding_start(mb_tiny_rtu_master_t *master,
+                                          uint8_t slave_id, uint16_t addr,
+                                          uint16_t count, uint32_t now_ms) {
+  return mb_tiny_rtu_master_read_start(master, slave_id, MB_FUNC_READ_HOLDING,
+                                       addr, count, MB_TINY_MAX_READ_REGS,
+                                       now_ms);
+}
+
+int mb_tiny_rtu_master_read_input_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t count, uint32_t now_ms) {
+  return mb_tiny_rtu_master_read_start(master, slave_id, MB_FUNC_READ_INPUT,
+                                       addr, count, MB_TINY_MAX_READ_REGS,
+                                       now_ms);
+}
+
+int mb_tiny_rtu_master_read_coils_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t count, uint32_t now_ms) {
+  return mb_tiny_rtu_master_read_start(master, slave_id, MB_FUNC_READ_COILS,
+                                       addr, count, MB_TINY_MAX_READ_BITS,
+                                       now_ms);
+}
+
+int mb_tiny_rtu_master_read_discrete_start(mb_tiny_rtu_master_t *master,
+                                           uint8_t slave_id, uint16_t addr,
+                                           uint16_t count, uint32_t now_ms) {
+  return mb_tiny_rtu_master_read_start(master, slave_id, MB_FUNC_READ_DISCRETE,
+                                       addr, count, MB_TINY_MAX_READ_BITS,
+                                       now_ms);
+}
+
+int mb_tiny_rtu_master_write_reg_start(mb_tiny_rtu_master_t *master,
+                                       uint8_t slave_id, uint16_t addr,
+                                       uint16_t value, uint32_t now_ms) {
+  return mb_tiny_rtu_master_start_fixed(
+      master, slave_id, MB_FUNC_WRITE_SINGLE_REG, addr, value, now_ms);
+}
+
+int mb_tiny_rtu_master_write_coil_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t value, uint32_t now_ms) {
+  if (value != 0x0000U && value != 0xFF00U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  return mb_tiny_rtu_master_start_fixed(
+      master, slave_id, MB_FUNC_WRITE_SINGLE_COIL, addr, value, now_ms);
+}
+
+int mb_tiny_rtu_master_write_regs_start(mb_tiny_rtu_master_t *master,
+                                        uint8_t slave_id, uint16_t addr,
+                                        uint16_t count, const uint16_t *data,
+                                        uint32_t now_ms) {
+  uint16_t request_len;
+  uint16_t i;
+  int ret;
+
+  if (data == NULL || count == 0U || count > MB_TINY_MAX_WRITE_REGS) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_rtu_master_prepare_request(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  master->response[0] = slave_id;
+  master->response[1] = MB_FUNC_WRITE_MULTIPLE_REGS;
+  mb_put_u16_be(&master->response[2], addr);
+  mb_put_u16_be(&master->response[4], count);
+  master->response[6] = (uint8_t)(count * 2U);
+  for (i = 0U; i < count; i++) {
+    mb_put_u16_be(&master->response[7U + i * 2U], data[i]);
+  }
+  request_len = mb_append_crc(master->response, (uint16_t)(7U + count * 2U));
+  ret = mb_tiny_rtu_master_start(master, master->response, request_len, now_ms);
+  if (ret == MB_TINY_OK) {
+    master->request_addr = addr;
+    master->request_value = count;
+    master->typed_request = true;
+  }
+  return ret;
+}
+
+int mb_tiny_rtu_master_write_coils_start(mb_tiny_rtu_master_t *master,
+                                         uint8_t slave_id, uint16_t addr,
+                                         uint16_t count, const uint8_t *data,
+                                         uint32_t now_ms) {
+  uint16_t byte_count;
+  uint16_t request_len;
+  int ret;
+
+  if (data == NULL || count == 0U || count > MB_TINY_MAX_WRITE_BITS) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_rtu_master_prepare_request(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  byte_count = (uint16_t)((count + 7U) / 8U);
+  master->response[0] = slave_id;
+  master->response[1] = MB_FUNC_WRITE_MULTIPLE_COILS;
+  mb_put_u16_be(&master->response[2], addr);
+  mb_put_u16_be(&master->response[4], count);
+  master->response[6] = (uint8_t)byte_count;
+  memcpy(&master->response[7], data, byte_count);
+  if ((count % 8U) != 0U) {
+    master->response[7U + byte_count - 1U] &=
+        (uint8_t)((1U << (count % 8U)) - 1U);
+  }
+  request_len = mb_append_crc(master->response, (uint16_t)(7U + byte_count));
+  ret = mb_tiny_rtu_master_start(master, master->response, request_len, now_ms);
+  if (ret == MB_TINY_OK) {
+    master->request_addr = addr;
+    master->request_value = count;
+    master->typed_request = true;
+  }
+  return ret;
+}
+
+static int mb_tiny_rtu_master_result_ready(const mb_tiny_rtu_master_t *master,
+                                           uint8_t function) {
+  if (master == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (master->state != MB_TINY_RTU_MASTER_DONE) {
+    return MB_TINY_BUSY;
+  }
+  if (master->result != MB_TINY_OK) {
+    return master->result;
+  }
+  if (!master->typed_request || master->function != function) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  return MB_TINY_OK;
+}
+
+static int
+mb_tiny_rtu_master_read_registers_result(const mb_tiny_rtu_master_t *master,
+                                         uint8_t function, uint16_t *data,
+                                         uint16_t data_capacity) {
+  uint16_t count;
+  uint16_t expected_len;
+  uint16_t i;
+  int ret;
+
+  if (data == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_rtu_master_result_ready(master, function);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  count = master->request_value;
+  if (count == 0U || count > MB_TINY_MAX_READ_REGS) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  if (data_capacity < count) {
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+  expected_len = (uint16_t)(5U + count * 2U);
+  if (master->response_len != expected_len ||
+      master->response[2] != (uint8_t)(count * 2U)) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  for (i = 0U; i < count; i++) {
+    data[i] = mb_get_u16_be(&master->response[3U + i * 2U]);
+  }
+  return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_master_read_holding_result(const mb_tiny_rtu_master_t *master,
+                                           uint16_t *data,
+                                           uint16_t data_capacity) {
+  return mb_tiny_rtu_master_read_registers_result(master, MB_FUNC_READ_HOLDING,
+                                                  data, data_capacity);
+}
+
+int mb_tiny_rtu_master_read_input_result(const mb_tiny_rtu_master_t *master,
+                                         uint16_t *data,
+                                         uint16_t data_capacity) {
+  return mb_tiny_rtu_master_read_registers_result(master, MB_FUNC_READ_INPUT,
+                                                  data, data_capacity);
+}
+
+static int
+mb_tiny_rtu_master_read_bits_result(const mb_tiny_rtu_master_t *master,
+                                    uint8_t function, uint8_t *data,
+                                    uint16_t data_capacity) {
+  uint16_t count;
+  uint16_t byte_count;
+  int ret;
+
+  if (data == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_rtu_master_result_ready(master, function);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  count = master->request_value;
+  if (count == 0U || count > MB_TINY_MAX_READ_BITS) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  byte_count = (uint16_t)((count + 7U) / 8U);
+  if (data_capacity < byte_count) {
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+  if (master->response_len != (uint16_t)(5U + byte_count) ||
+      master->response[2] != (uint8_t)byte_count) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  memcpy(data, &master->response[3], byte_count);
+  if ((count % 8U) != 0U) {
+    data[byte_count - 1U] &= (uint8_t)((1U << (count % 8U)) - 1U);
+  }
+  return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_master_read_coils_result(const mb_tiny_rtu_master_t *master,
+                                         uint8_t *data,
+                                         uint16_t data_capacity) {
+  return mb_tiny_rtu_master_read_bits_result(master, MB_FUNC_READ_COILS, data,
+                                             data_capacity);
+}
+
+int mb_tiny_rtu_master_read_discrete_result(const mb_tiny_rtu_master_t *master,
+                                            uint8_t *data,
+                                            uint16_t data_capacity) {
+  return mb_tiny_rtu_master_read_bits_result(master, MB_FUNC_READ_DISCRETE,
+                                             data, data_capacity);
+}
+
+static int mb_tiny_rtu_master_write_result(const mb_tiny_rtu_master_t *master,
+                                           uint8_t function) {
+  int ret;
+
+  ret = mb_tiny_rtu_master_result_ready(master, function);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  if (master->response_len != 8U ||
+      mb_get_u16_be(&master->response[2]) != master->request_addr ||
+      mb_get_u16_be(&master->response[4]) != master->request_value) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_master_write_reg_result(const mb_tiny_rtu_master_t *master) {
+  return mb_tiny_rtu_master_write_result(master, MB_FUNC_WRITE_SINGLE_REG);
+}
+
+int mb_tiny_rtu_master_write_coil_result(const mb_tiny_rtu_master_t *master) {
+  return mb_tiny_rtu_master_write_result(master, MB_FUNC_WRITE_SINGLE_COIL);
+}
+
+int mb_tiny_rtu_master_write_regs_result(const mb_tiny_rtu_master_t *master) {
+  return mb_tiny_rtu_master_write_result(master, MB_FUNC_WRITE_MULTIPLE_REGS);
+}
+
+int mb_tiny_rtu_master_write_coils_result(const mb_tiny_rtu_master_t *master) {
+  return mb_tiny_rtu_master_write_result(master, MB_FUNC_WRITE_MULTIPLE_COILS);
 }
 
 int mb_tiny_rtu_slave_poll(mb_tiny_slave_t *slave,
