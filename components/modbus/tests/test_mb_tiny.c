@@ -13,6 +13,12 @@ static uint16_t g_master_response_len;
 static uint8_t g_master_request[MB_TINY_MAX_ADU_SIZE];
 static uint16_t g_master_request_len;
 static int g_master_send_mode;
+static uint8_t g_async_tx_data[MB_TINY_MAX_ADU_SIZE];
+static uint16_t g_async_tx_len;
+static int g_async_tx_mode;
+static int g_de_mode;
+static bool g_de_state;
+static uint32_t g_de_calls;
 
 #define CHECK(condition)                                                       \
   do {                                                                         \
@@ -50,6 +56,18 @@ static int master_send(const uint8_t *data, uint16_t len) {
     return (int)len - 1;
   }
   return len;
+}
+
+static int async_tx_start(const uint8_t *data, uint16_t len) {
+  memcpy(g_async_tx_data, data, len);
+  g_async_tx_len = len;
+  return g_async_tx_mode == 0 ? len : (int)len - 1;
+}
+
+static int rs485_set_de(bool transmit) {
+  g_de_calls++;
+  g_de_state = transmit;
+  return g_de_mode == 0 ? 0 : -1;
 }
 
 static int master_recv(uint8_t *data, uint16_t capacity, uint32_t timeout_ms) {
@@ -248,6 +266,161 @@ static void test_rtu_receive_queue(void) {
   CHECK_EQ(frame_len, 4U);
   CHECK_EQ(frame[0], 0xC0U);
   CHECK_EQ(frame[3], 0xC3U);
+}
+
+static void test_rtu_nonblocking_tx(void) {
+  mb_tiny_rtu_tx_t tx;
+  uint8_t data[4] = {1U, 2U, 3U, 4U};
+
+  CHECK_EQ(mb_tiny_rtu_tx_init(&tx, NULL, rs485_set_de, 10U),
+           MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_tx_init(&tx, async_tx_start, rs485_set_de, 0U),
+           MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_tx_init(&tx, async_tx_start, rs485_set_de, 10U),
+           MB_TINY_OK);
+  CHECK(mb_tiny_rtu_tx_is_idle(&tx));
+
+  g_async_tx_mode = 0;
+  g_de_mode = 0;
+  g_de_state = false;
+  g_de_calls = 0U;
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), 100U), MB_TINY_OK);
+  CHECK(g_de_state);
+  CHECK_EQ(g_de_calls, 1U);
+  CHECK_EQ(g_async_tx_len, sizeof(data));
+  CHECK_EQ(memcmp(g_async_tx_data, data, sizeof(data)), 0);
+  data[0] = 0xFFU;
+  CHECK_EQ(tx.data[0], 1U);
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), 101U), MB_TINY_BUSY);
+  CHECK_EQ(mb_tiny_rtu_tx_process(&tx, 109U), MB_TINY_BUSY);
+  mb_tiny_rtu_tx_complete_isr(&tx);
+  CHECK(g_de_state);
+  CHECK_EQ(g_de_calls, 1U);
+  CHECK_EQ(mb_tiny_rtu_tx_process(&tx, 109U), MB_TINY_OK);
+  CHECK(!g_de_state);
+  CHECK_EQ(g_de_calls, 2U);
+  CHECK_EQ(tx.completed_count, 1U);
+  CHECK(mb_tiny_rtu_tx_is_idle(&tx));
+  CHECK_EQ(mb_tiny_rtu_tx_process(&tx, 110U), MB_TINY_IGNORED);
+
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), UINT32_MAX - 4U),
+           MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_tx_process(&tx, 4U), MB_TINY_BUSY);
+  CHECK_EQ(mb_tiny_rtu_tx_process(&tx, 5U), MB_TINY_TIMEOUT);
+  CHECK(!g_de_state);
+  CHECK_EQ(tx.error_count, 1U);
+
+  g_async_tx_mode = 1;
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), 200U),
+           MB_TINY_IO_ERROR);
+  CHECK(!g_de_state);
+  CHECK(mb_tiny_rtu_tx_is_idle(&tx));
+  CHECK_EQ(tx.error_count, 2U);
+  g_async_tx_mode = 0;
+
+  g_de_mode = 1;
+  g_de_calls = 0U;
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), 300U),
+           MB_TINY_IO_ERROR);
+  CHECK_EQ(tx.error_count, 3U);
+  CHECK_EQ(g_de_calls, 2U);
+  g_de_mode = 0;
+
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), 350U), MB_TINY_OK);
+  mb_tiny_rtu_tx_complete_isr(&tx);
+  CHECK_EQ(mb_tiny_rtu_tx_process(&tx, 360U), MB_TINY_OK);
+  CHECK_EQ(tx.completed_count, 2U);
+
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, sizeof(data), 400U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_tx_abort(&tx), MB_TINY_OK);
+  CHECK(!g_de_state);
+  CHECK(mb_tiny_rtu_tx_is_idle(&tx));
+
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, NULL, sizeof(data), 500U),
+           MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_tx_start(&tx, data, 0U, 500U), MB_TINY_INVALID_PARAM);
+}
+
+static void test_rtu_slave_service(void) {
+  mb_tiny_slave_t slave;
+  mb_tiny_rtu_rx_queue_t queue;
+  mb_tiny_rtu_rx_slot_t slots[16];
+  mb_tiny_rtu_rx_t rx;
+  mb_tiny_rtu_tx_t tx;
+  uint16_t holding = 0x1234U;
+  uint8_t request[MB_TINY_MAX_ADU_SIZE];
+  uint8_t response[MB_TINY_MAX_ADU_SIZE];
+  uint16_t request_len;
+  uint16_t i;
+
+  CHECK_EQ(mb_tiny_slave_init(&slave, 1U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_slave_config_holding(&slave, &holding, 0U, 1U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_init(&queue, slots, 16U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_init(&rx, 4U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_tx_init(&tx, async_tx_start, rs485_set_de, 20U),
+           MB_TINY_OK);
+  g_async_tx_mode = 0;
+  g_de_mode = 0;
+  g_de_state = false;
+
+  request[0] = 1U;
+  request[1] = MB_FUNC_READ_HOLDING;
+  request[2] = 0U;
+  request[3] = 0U;
+  request[4] = 0U;
+  request[5] = 1U;
+  request_len = append_crc(request, 6U);
+  for (i = 0U; i < request_len; i++) {
+    CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, request[i], i), MB_TINY_OK);
+  }
+  CHECK_EQ(mb_tiny_rtu_slave_poll(&slave, &queue, &rx, &tx, 20U, request,
+                                  sizeof(request), response, sizeof(response)),
+           MB_TINY_RESPONSE_STARTED);
+  CHECK(g_de_state);
+  CHECK_EQ(g_async_tx_len, 7U);
+  CHECK_EQ(g_async_tx_data[0], 1U);
+  CHECK_EQ(g_async_tx_data[1], MB_FUNC_READ_HOLDING);
+  CHECK_EQ(g_async_tx_data[3], 0x12U);
+  CHECK_EQ(g_async_tx_data[4], 0x34U);
+  CHECK_EQ(mb_tiny_rtu_slave_poll(&slave, &queue, &rx, &tx, 21U, request,
+                                  sizeof(request), response, sizeof(response)),
+           MB_TINY_BUSY);
+  mb_tiny_rtu_tx_complete_isr(&tx);
+  CHECK_EQ(mb_tiny_rtu_slave_poll(&slave, &queue, &rx, &tx, 22U, request,
+                                  sizeof(request), response, sizeof(response)),
+           MB_TINY_OK);
+  CHECK(!g_de_state);
+
+  request[0] = 0U;
+  request[1] = MB_FUNC_WRITE_SINGLE_REG;
+  request[4] = 0xABU;
+  request[5] = 0xCDU;
+  request_len = append_crc(request, 6U);
+  for (i = 0U; i < request_len; i++) {
+    CHECK_EQ(
+        mb_tiny_rtu_rx_queue_push_isr(&queue, request[i], (uint32_t)(30U + i)),
+        MB_TINY_OK);
+  }
+  CHECK_EQ(mb_tiny_rtu_slave_poll(&slave, &queue, &rx, &tx, 50U, request,
+                                  sizeof(request), response, sizeof(response)),
+           MB_TINY_NO_RESPONSE);
+  CHECK_EQ(holding, 0xABCDU);
+  CHECK(mb_tiny_rtu_tx_is_idle(&tx));
+
+  request[0] = 2U;
+  request[1] = MB_FUNC_READ_HOLDING;
+  request[4] = 0U;
+  request[5] = 1U;
+  request_len = append_crc(request, 6U);
+  for (i = 0U; i < request_len; i++) {
+    CHECK_EQ(
+        mb_tiny_rtu_rx_queue_push_isr(&queue, request[i], (uint32_t)(60U + i)),
+        MB_TINY_OK);
+  }
+  CHECK_EQ(mb_tiny_rtu_slave_poll(&slave, &queue, &rx, &tx, 80U, request,
+                                  sizeof(request), response, sizeof(response)),
+           MB_TINY_IGNORED);
+  CHECK(mb_tiny_rtu_tx_is_idle(&tx));
 }
 
 static void test_slave_registers_and_limits(void) {
@@ -797,6 +970,8 @@ int main(void) {
   test_crc();
   test_rtu_receive_framing();
   test_rtu_receive_queue();
+  test_rtu_nonblocking_tx();
+  test_rtu_slave_service();
   test_slave_registers_and_limits();
   test_slave_coil_alignment_and_validation();
   test_slave_read_only_maps();

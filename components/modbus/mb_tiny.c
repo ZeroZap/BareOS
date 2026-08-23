@@ -332,6 +332,169 @@ int mb_tiny_rtu_rx_queue_process(mb_tiny_rtu_rx_queue_t *queue,
   return mb_tiny_rtu_rx_poll(rx, now_ms, frame, frame_capacity, frame_len);
 }
 
+/* ==================== Non-blocking RS-485 TX ==================== */
+
+int mb_tiny_rtu_tx_init(mb_tiny_rtu_tx_t *tx, mb_tiny_tx_start_cb_t start_cb,
+                        mb_tiny_rs485_de_cb_t de_cb, uint32_t timeout_ms) {
+  if (tx == NULL || start_cb == NULL || de_cb == NULL || timeout_ms == 0U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  memset(tx, 0, sizeof(*tx));
+  tx->start_cb = start_cb;
+  tx->de_cb = de_cb;
+  tx->timeout_ms = timeout_ms;
+  tx->initialized = true;
+  return MB_TINY_OK;
+}
+
+bool mb_tiny_rtu_tx_is_idle(const mb_tiny_rtu_tx_t *tx) {
+  return tx != NULL && tx->initialized && !tx->transmitting;
+}
+
+int mb_tiny_rtu_tx_start(mb_tiny_rtu_tx_t *tx, const uint8_t *data,
+                         uint16_t len, uint32_t now_ms) {
+  int ret;
+
+  if (tx == NULL || data == NULL || len == 0U || len > MB_TINY_MAX_ADU_SIZE) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!tx->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (tx->transmitting) {
+    return MB_TINY_BUSY;
+  }
+
+  memcpy(tx->data, data, len);
+  tx->len = len;
+  tx->complete = false;
+  if (tx->de_cb(true) != 0) {
+    tx->error_count++;
+    (void)tx->de_cb(false);
+    return MB_TINY_IO_ERROR;
+  }
+
+  tx->started_ms = now_ms;
+  tx->transmitting = true;
+  ret = tx->start_cb(tx->data, len);
+  if (ret != (int)len) {
+    tx->transmitting = false;
+    tx->complete = false;
+    tx->error_count++;
+    (void)tx->de_cb(false);
+    return MB_TINY_IO_ERROR;
+  }
+  return MB_TINY_OK;
+}
+
+void mb_tiny_rtu_tx_complete_isr(mb_tiny_rtu_tx_t *tx) {
+  if (tx != NULL && tx->initialized && tx->transmitting) {
+    mb_tiny_compiler_barrier();
+    tx->complete = true;
+  }
+}
+
+int mb_tiny_rtu_tx_abort(mb_tiny_rtu_tx_t *tx) {
+  int ret;
+
+  if (tx == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!tx->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+
+  tx->transmitting = false;
+  tx->complete = false;
+  ret = tx->de_cb(false);
+  if (ret != 0) {
+    tx->error_count++;
+    return MB_TINY_IO_ERROR;
+  }
+  return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_tx_process(mb_tiny_rtu_tx_t *tx, uint32_t now_ms) {
+  int ret;
+  bool completed;
+  bool timed_out;
+
+  if (tx == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!tx->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (!tx->transmitting) {
+    return MB_TINY_IGNORED;
+  }
+
+  mb_tiny_compiler_barrier();
+  completed = tx->complete;
+  timed_out =
+      !completed && (uint32_t)(now_ms - tx->started_ms) >= tx->timeout_ms;
+  if (!completed && !timed_out) {
+    return MB_TINY_BUSY;
+  }
+
+  tx->transmitting = false;
+  tx->complete = false;
+  ret = tx->de_cb(false);
+  if (ret != 0) {
+    tx->error_count++;
+    return MB_TINY_IO_ERROR;
+  }
+  if (timed_out) {
+    tx->error_count++;
+    return MB_TINY_TIMEOUT;
+  }
+
+  tx->completed_count++;
+  return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_slave_poll(mb_tiny_slave_t *slave,
+                           mb_tiny_rtu_rx_queue_t *queue, mb_tiny_rtu_rx_t *rx,
+                           mb_tiny_rtu_tx_t *tx, uint32_t now_ms,
+                           uint8_t *request, uint16_t request_capacity,
+                           uint8_t *response, uint16_t response_capacity) {
+  uint16_t request_len;
+  uint16_t response_len;
+  int ret;
+
+  if (slave == NULL || queue == NULL || rx == NULL || tx == NULL ||
+      request == NULL || response == NULL || request == response ||
+      request_capacity == 0U || response_capacity == 0U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!slave->initialized || !tx->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+
+  if (!mb_tiny_rtu_tx_is_idle(tx)) {
+    return mb_tiny_rtu_tx_process(tx, now_ms);
+  }
+
+  ret = mb_tiny_rtu_rx_queue_process(queue, rx, now_ms, request,
+                                     request_capacity, &request_len);
+  if (ret != MB_TINY_FRAME_READY) {
+    return ret;
+  }
+
+  ret = mb_tiny_slave_process(slave, request, request_len, response,
+                              response_capacity, &response_len);
+  if (ret == MB_TINY_IGNORED || ret == MB_TINY_NO_RESPONSE) {
+    return ret;
+  }
+  if (ret != MB_TINY_OK && ret != MB_TINY_EXCEPTION) {
+    return ret;
+  }
+
+  ret = mb_tiny_rtu_tx_start(tx, response, response_len, now_ms);
+  return ret == MB_TINY_OK ? MB_TINY_RESPONSE_STARTED : ret;
+}
+
 /* ==================== Slave implementation ==================== */
 
 int mb_tiny_slave_init(mb_tiny_slave_t *slave, uint8_t slave_id) {

@@ -43,10 +43,12 @@ extern "C" {
 #define MB_TINY_EXCEPTION (-7)
 #define MB_TINY_NOT_INITIALIZED (-8)
 #define MB_TINY_BUFFER_TOO_SMALL (-9)
+#define MB_TINY_BUSY (-10)
 
 #define MB_TINY_IGNORED 1
 #define MB_TINY_NO_RESPONSE 2
 #define MB_TINY_FRAME_READY 3
+#define MB_TINY_RESPONSE_STARTED 4
 
 /* ==================== Function codes ==================== */
 
@@ -82,6 +84,12 @@ typedef int (*mb_tiny_send_cb_t)(const uint8_t *data, uint16_t len);
  */
 typedef int (*mb_tiny_recv_cb_t)(uint8_t *data, uint16_t len,
                                  uint32_t timeout_ms);
+
+/** Start an asynchronous UART or DMA transfer; return accepted byte count. */
+typedef int (*mb_tiny_tx_start_cb_t)(const uint8_t *data, uint16_t len);
+
+/** Set RS-485 direction: true for transmit, false for receive. */
+typedef int (*mb_tiny_rs485_de_cb_t)(bool transmit);
 
 /* ==================== Data maps ==================== */
 
@@ -148,6 +156,20 @@ typedef struct {
   volatile uint32_t dropped_bytes;
   uint32_t handled_dropped_bytes;
 } mb_tiny_rtu_rx_queue_t;
+
+typedef struct {
+  uint8_t data[MB_TINY_MAX_ADU_SIZE];
+  uint16_t len;
+  uint32_t started_ms;
+  uint32_t timeout_ms;
+  mb_tiny_tx_start_cb_t start_cb;
+  mb_tiny_rs485_de_cb_t de_cb;
+  volatile bool complete;
+  bool transmitting;
+  bool initialized;
+  uint32_t completed_count;
+  uint32_t error_count;
+} mb_tiny_rtu_tx_t;
 
 typedef struct {
   uint8_t slave_id;
@@ -220,6 +242,36 @@ int mb_tiny_rtu_rx_queue_process(mb_tiny_rtu_rx_queue_t *queue,
 uint16_t mb_tiny_rtu_rx_queue_pending(const mb_tiny_rtu_rx_queue_t *queue);
 bool mb_tiny_rtu_rx_queue_is_idle(const mb_tiny_rtu_rx_queue_t *queue,
                                   const mb_tiny_rtu_rx_t *rx);
+
+/* ==================== Non-blocking RS-485 TX API ==================== */
+
+int mb_tiny_rtu_tx_init(mb_tiny_rtu_tx_t *tx, mb_tiny_tx_start_cb_t start_cb,
+                        mb_tiny_rs485_de_cb_t de_cb, uint32_t timeout_ms);
+
+/** Copy an ADU, assert DE, and start asynchronous UART/DMA transmission. */
+int mb_tiny_rtu_tx_start(mb_tiny_rtu_tx_t *tx, const uint8_t *data,
+                         uint16_t len, uint32_t now_ms);
+
+/** UART transmission-complete ISR hook. Only records completion. */
+void mb_tiny_rtu_tx_complete_isr(mb_tiny_rtu_tx_t *tx);
+
+/** Deassert DE after completion or timeout. Call from the main loop. */
+int mb_tiny_rtu_tx_process(mb_tiny_rtu_tx_t *tx, uint32_t now_ms);
+
+/** Abort a transfer and restore receive direction from main-loop context. */
+int mb_tiny_rtu_tx_abort(mb_tiny_rtu_tx_t *tx);
+bool mb_tiny_rtu_tx_is_idle(const mb_tiny_rtu_tx_t *tx);
+
+/**
+ * Poll one complete non-blocking slave service cycle. request and response must
+ * not overlap. Returns MB_TINY_RESPONSE_STARTED when a unicast response has
+ * started, MB_TINY_NO_RESPONSE for a broadcast write, or another local status.
+ */
+int mb_tiny_rtu_slave_poll(mb_tiny_slave_t *slave,
+                           mb_tiny_rtu_rx_queue_t *queue, mb_tiny_rtu_rx_t *rx,
+                           mb_tiny_rtu_tx_t *tx, uint32_t now_ms,
+                           uint8_t *request, uint16_t request_capacity,
+                           uint8_t *response, uint16_t response_capacity);
 
 /* ==================== Slave API ==================== */
 

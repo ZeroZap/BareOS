@@ -36,8 +36,14 @@ rate and worst-case main-loop latency. The single UART RX ISR calls
 received. The main loop calls `mb_tiny_rtu_rx_queue_process()`; queued timestamps
 allow it to separate multiple complete frames even when processing is delayed.
 
-The component does **not** control an RS-485 DE pin, validate `t1.5` mid-frame
-gaps, or provide a non-blocking master transaction state machine.
+`mb_tiny_rtu_tx_t` provides non-blocking RS-485 transmission. It copies the ADU
+into instance-owned storage, asserts DE, starts UART/DMA transmission, and waits
+for the UART transmission-complete ISR to set a flag. The main loop then calls
+`mb_tiny_rtu_tx_process()` to deassert DE. It also restores receive direction on
+start failure, timeout, or explicit abort.
+
+The component does **not** validate `t1.5` mid-frame gaps or provide a
+non-blocking master transaction state machine.
 
 The synchronous master receive callback can wait up to `timeout_ms`. Do not call
 these wrappers from BareOS's cooperative main loop when blocking would delay AT
@@ -69,7 +75,7 @@ void modbus_uart_rx_isr(uint8_t byte)
     (void)mb_tiny_rtu_rx_queue_push_isr(&rx_queue, byte, g_sys_tick_ms);
 }
 
-void modbus_process(void)
+void modbus_rx_process(void)
 {
     uint8_t request[MB_TINY_MAX_ADU_SIZE];
     uint16_t request_len;
@@ -93,6 +99,74 @@ partial frame instead of risking execution of a truncated request.
 Call `mb_tiny_rtu_rx_queue_is_idle()` from power-management eligibility logic.
 Do not enter a sleep mode that stops the UART or shared timestamp source while
 it reports busy.
+
+## Non-blocking RS-485 TX
+
+```c
+static mb_tiny_rtu_tx_t rtu_tx;
+
+static int uart_tx_start(const uint8_t *data, uint16_t len)
+{
+    return bsp_uart_tx_dma(data, len); /* return accepted byte count */
+}
+
+static int rs485_set_direction(bool transmit)
+{
+    bsp_gpio_write(RS485_DE_PIN, transmit);
+    return 0;
+}
+
+void modbus_tx_init(void)
+{
+    mb_tiny_rtu_tx_init(&rtu_tx, uart_tx_start, rs485_set_direction, 100U);
+}
+
+void modbus_uart_tx_complete_isr(void)
+{
+    mb_tiny_rtu_tx_complete_isr(&rtu_tx);
+}
+
+void modbus_process(void)
+{
+    int status = mb_tiny_rtu_tx_process(&rtu_tx, g_sys_tick_ms);
+    if (status == MB_TINY_TIMEOUT) {
+        /* Reset or recover the UART as required by the BSP. */
+    }
+}
+```
+
+The TX-complete interrupt must mean that the UART shift register has transmitted
+the final stop bit. A DMA-complete or TXE interrupt only means that bytes have
+moved into the UART and is too early to deassert DE. The ISR hook only records
+completion; GPIO and recovery callbacks run in main-loop context.
+
+The timeout bounds how long DE may remain asserted if the UART completion event
+is lost. `mb_tiny_rtu_tx_is_idle()` can participate in power-management sleep
+eligibility. Do not modify or reuse the TX instance until it reports idle.
+
+A non-blocking slave can combine receive framing, request processing, and RS-485
+transmission with one main-loop call:
+
+```c
+static uint8_t request[MB_TINY_MAX_ADU_SIZE];
+static uint8_t response[MB_TINY_MAX_ADU_SIZE];
+
+void modbus_process(void)
+{
+    int status = mb_tiny_rtu_slave_poll(
+        &slave, &rx_queue, &rtu_rx, &rtu_tx, g_sys_tick_ms,
+        request, sizeof(request), response, sizeof(response));
+
+    if (status == MB_TINY_TIMEOUT || status == MB_TINY_IO_ERROR) {
+        /* Recover the UART or record a communication fault. */
+    }
+}
+```
+
+The request and response buffers must not overlap. While TX is active, this
+helper only advances TX completion or timeout handling and leaves queued RX
+bytes untouched. Broadcast writes execute without starting TX; requests for a
+different unit are ignored.
 
 ## Addressing and data layout
 
@@ -191,6 +265,5 @@ sanitizers are optional rather than enabled by default.
 
 ## Remaining work
 
-- Add RS-485 DE control and TX-complete handling.
 - Add a non-blocking master transaction state machine driven by the shared
   BareOS time source.
