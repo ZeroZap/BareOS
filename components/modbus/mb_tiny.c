@@ -102,6 +102,104 @@ static void mb_coil_set(mb_tiny_coils_t *map, uint16_t address, bool value) {
   }
 }
 
+/* ==================== RTU receive framing ==================== */
+
+uint16_t mb_tiny_rtu_frame_gap_ms(uint32_t baud_rate, uint8_t bits_per_char) {
+  uint32_t numerator;
+  uint32_t gap_ms;
+
+  if (baud_rate == 0U || bits_per_char < 8U || bits_per_char > 12U) {
+    return 0U;
+  }
+  if (baud_rate > 19200UL) {
+    return 2U;
+  }
+
+  numerator = (uint32_t)bits_per_char * 3500UL;
+  gap_ms = (numerator + baud_rate - 1U) / baud_rate;
+  return gap_ms <= 0xFFFFUL ? (uint16_t)gap_ms : 0U;
+}
+
+int mb_tiny_rtu_rx_init(mb_tiny_rtu_rx_t *rx, uint16_t frame_gap_ms) {
+  if (rx == NULL || frame_gap_ms == 0U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  memset(rx, 0, sizeof(*rx));
+  rx->frame_gap_ms = frame_gap_ms;
+  return MB_TINY_OK;
+}
+
+void mb_tiny_rtu_rx_reset(mb_tiny_rtu_rx_t *rx) {
+  if (rx != NULL) {
+    rx->len = 0U;
+    rx->receiving = false;
+    rx->overflow = false;
+  }
+}
+
+bool mb_tiny_rtu_rx_is_idle(const mb_tiny_rtu_rx_t *rx) {
+  return rx != NULL && !rx->receiving;
+}
+
+int mb_tiny_rtu_rx_feed(mb_tiny_rtu_rx_t *rx, uint8_t byte, uint32_t now_ms) {
+  bool missed_frame;
+
+  if (rx == NULL || rx->frame_gap_ms == 0U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  missed_frame = rx->receiving &&
+                 (uint32_t)(now_ms - rx->last_byte_ms) >= rx->frame_gap_ms;
+  if (missed_frame) {
+    rx->dropped_frames++;
+    mb_tiny_rtu_rx_reset(rx);
+  }
+
+  rx->receiving = true;
+  rx->last_byte_ms = now_ms;
+  if (rx->overflow) {
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+  if (rx->len >= MB_TINY_MAX_ADU_SIZE) {
+    rx->overflow = true;
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+  rx->data[rx->len++] = byte;
+  return missed_frame ? MB_TINY_FRAME_ERROR : MB_TINY_OK;
+}
+
+int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
+                        uint16_t frame_capacity, uint16_t *frame_len) {
+  if (rx == NULL || frame == NULL || frame_len == NULL ||
+      rx->frame_gap_ms == 0U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  *frame_len = 0U;
+  if (!rx->receiving ||
+      (uint32_t)(now_ms - rx->last_byte_ms) < rx->frame_gap_ms) {
+    return MB_TINY_IGNORED;
+  }
+  if (rx->overflow) {
+    rx->dropped_frames++;
+    mb_tiny_rtu_rx_reset(rx);
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+  if (rx->len < MB_TINY_MIN_ADU_SIZE) {
+    rx->dropped_frames++;
+    mb_tiny_rtu_rx_reset(rx);
+    return MB_TINY_FRAME_ERROR;
+  }
+  if (frame_capacity < rx->len) {
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+
+  memcpy(frame, rx->data, rx->len);
+  *frame_len = rx->len;
+  mb_tiny_rtu_rx_reset(rx);
+  return MB_TINY_FRAME_READY;
+}
+
 /* ==================== Slave implementation ==================== */
 
 int mb_tiny_slave_init(mb_tiny_slave_t *slave, uint8_t slave_id) {
@@ -675,13 +773,17 @@ static void mb_tiny_master_build_fixed_request(mb_tiny_master_t *master,
 static int mb_tiny_master_read_registers(mb_tiny_master_t *master,
                                          uint8_t slave_id, uint8_t function,
                                          uint16_t addr, uint16_t count,
-                                         uint16_t *data) {
+                                         uint16_t *data,
+                                         uint16_t data_capacity) {
   uint16_t expected_len;
   uint16_t i;
   int ret;
 
   if (data == NULL || count == 0U || count > MB_TINY_MAX_READ_REGS) {
     return MB_TINY_INVALID_PARAM;
+  }
+  if (data_capacity < count) {
+    return MB_TINY_BUFFER_TOO_SMALL;
   }
   ret = mb_tiny_master_validate_args(master, slave_id);
   if (ret != MB_TINY_OK) {
@@ -710,14 +812,28 @@ static int mb_tiny_master_read_registers(mb_tiny_master_t *master,
 
 int mb_tiny_master_read_holding(mb_tiny_master_t *master, uint8_t slave_id,
                                 uint16_t addr, uint16_t count, uint16_t *data) {
+  return mb_tiny_master_read_holding_ex(master, slave_id, addr, count, data,
+                                        count);
+}
+
+int mb_tiny_master_read_holding_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                   uint16_t addr, uint16_t count,
+                                   uint16_t *data, uint16_t data_capacity) {
   return mb_tiny_master_read_registers(master, slave_id, MB_FUNC_READ_HOLDING,
-                                       addr, count, data);
+                                       addr, count, data, data_capacity);
 }
 
 int mb_tiny_master_read_input(mb_tiny_master_t *master, uint8_t slave_id,
                               uint16_t addr, uint16_t count, uint16_t *data) {
+  return mb_tiny_master_read_input_ex(master, slave_id, addr, count, data,
+                                      count);
+}
+
+int mb_tiny_master_read_input_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                 uint16_t addr, uint16_t count, uint16_t *data,
+                                 uint16_t data_capacity) {
   return mb_tiny_master_read_registers(master, slave_id, MB_FUNC_READ_INPUT,
-                                       addr, count, data);
+                                       addr, count, data, data_capacity);
 }
 
 int mb_tiny_master_write_reg(mb_tiny_master_t *master, uint8_t slave_id,
@@ -786,13 +902,18 @@ int mb_tiny_master_write_regs(mb_tiny_master_t *master, uint8_t slave_id,
 
 static int mb_tiny_master_read_bits(mb_tiny_master_t *master, uint8_t slave_id,
                                     uint8_t function, uint16_t addr,
-                                    uint16_t count, uint8_t *data) {
+                                    uint16_t count, uint8_t *data,
+                                    uint16_t data_capacity) {
   uint16_t byte_count;
   uint16_t expected_len;
   int ret;
 
   if (data == NULL || count == 0U || count > MB_TINY_MAX_READ_BITS) {
     return MB_TINY_INVALID_PARAM;
+  }
+  byte_count = (uint16_t)((count + 7U) / 8U);
+  if (data_capacity < byte_count) {
+    return MB_TINY_BUFFER_TOO_SMALL;
   }
   ret = mb_tiny_master_validate_args(master, slave_id);
   if (ret != MB_TINY_OK) {
@@ -805,7 +926,6 @@ static int mb_tiny_master_read_bits(mb_tiny_master_t *master, uint8_t slave_id,
     return ret;
   }
 
-  byte_count = (uint16_t)((count + 7U) / 8U);
   expected_len = (uint16_t)(5U + byte_count);
   if (master->rx_len != expected_len ||
       master->rx_buf[2] != (uint8_t)byte_count) {
@@ -823,14 +943,28 @@ static int mb_tiny_master_read_bits(mb_tiny_master_t *master, uint8_t slave_id,
 
 int mb_tiny_master_read_coils(mb_tiny_master_t *master, uint8_t slave_id,
                               uint16_t addr, uint16_t count, uint8_t *data) {
+  return mb_tiny_master_read_coils_ex(master, slave_id, addr, count, data,
+                                      (uint16_t)((count + 7U) / 8U));
+}
+
+int mb_tiny_master_read_coils_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                 uint16_t addr, uint16_t count, uint8_t *data,
+                                 uint16_t data_capacity) {
   return mb_tiny_master_read_bits(master, slave_id, MB_FUNC_READ_COILS, addr,
-                                  count, data);
+                                  count, data, data_capacity);
 }
 
 int mb_tiny_master_read_discrete(mb_tiny_master_t *master, uint8_t slave_id,
                                  uint16_t addr, uint16_t count, uint8_t *data) {
+  return mb_tiny_master_read_discrete_ex(master, slave_id, addr, count, data,
+                                         (uint16_t)((count + 7U) / 8U));
+}
+
+int mb_tiny_master_read_discrete_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                    uint16_t addr, uint16_t count,
+                                    uint8_t *data, uint16_t data_capacity) {
   return mb_tiny_master_read_bits(master, slave_id, MB_FUNC_READ_DISCRETE, addr,
-                                  count, data);
+                                  count, data, data_capacity);
 }
 
 int mb_tiny_master_write_coils(mb_tiny_master_t *master, uint8_t slave_id,

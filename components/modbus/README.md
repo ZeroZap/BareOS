@@ -18,20 +18,32 @@ Supported function codes:
 | `0x0F` | Write multiple coils             |    Yes |   Yes |
 | `0x10` | Write multiple holding registers |    Yes |   Yes |
 
-This component currently processes complete RTU ADUs. The pure
-`mb_tiny_slave_process()` API converts one request ADU into a caller-owned
-response buffer without performing IO. `mb_tiny_slave_handle()` is a compatible
-wrapper that sends generated responses through the configured callback.
+The pure `mb_tiny_slave_process()` API converts one complete request ADU into a
+caller-owned response buffer without performing IO. `mb_tiny_slave_handle()` is
+a compatible wrapper that sends generated responses through the configured
+callback.
 
-The component does **not** detect `t1.5`/`t3.5` frame gaps, own a UART ring
-buffer, control an RS-485 DE pin, or provide a non-blocking master transaction
-state machine. The caller must split UART input into complete ADUs before
-calling either slave API.
+`mb_tiny_rtu_rx_t` provides poll-driven RTU frame separation. Feed timestamped
+UART bytes from the main loop with `mb_tiny_rtu_rx_feed()`, then call
+`mb_tiny_rtu_rx_poll()` to retrieve an ADU after the `t3.5` silence interval.
+`mb_tiny_rtu_frame_gap_ms()` calculates a conservative whole-millisecond gap
+without floating point.
+
+The UART ISR should still only write bytes and timestamps to an
+application-owned ring buffer. The component does **not** own that ISR ring,
+control an RS-485 DE pin, validate `t1.5` mid-frame gaps, or provide a
+non-blocking master transaction state machine.
 
 The synchronous master receive callback can wait up to `timeout_ms`. Do not call
 these wrappers from BareOS's cooperative main loop when blocking would delay AT
 processing or power management. A poll-driven RTU transport remains future
 work.
+
+Capacity-aware master read APIs use the `_ex` suffix. Register capacities are
+specified in registers; coil and discrete-input capacities are specified in
+bytes. They reject undersized output buffers before starting UART IO. The legacy
+read APIs remain source-compatible, but callers should prefer `_ex` when the
+actual destination capacity is known.
 
 ## Addressing and data layout
 
@@ -130,7 +142,7 @@ sanitizers are optional rather than enabled by default.
 
 ## Remaining work
 
-- Add output-capacity parameters to master read APIs in the next breaking API
-  revision.
-- Add a non-blocking RTU transport driven by UART RX events, TX-complete events,
-  and the shared BareOS time source.
+- Add an ISR-safe UART byte/timestamp SPSC adapter around the RTU frame receiver.
+- Add RS-485 DE control and TX-complete handling.
+- Add a non-blocking master transaction state machine driven by the shared
+  BareOS time source.

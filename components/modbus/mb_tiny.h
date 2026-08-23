@@ -46,6 +46,7 @@ extern "C" {
 
 #define MB_TINY_IGNORED 1
 #define MB_TINY_NO_RESPONSE 2
+#define MB_TINY_FRAME_READY 3
 
 /* ==================== Function codes ==================== */
 
@@ -124,6 +125,16 @@ typedef struct {
 } mb_tiny_slave_t;
 
 typedef struct {
+  uint8_t data[MB_TINY_MAX_ADU_SIZE];
+  uint16_t len;
+  uint16_t frame_gap_ms;
+  uint32_t last_byte_ms;
+  uint32_t dropped_frames;
+  bool receiving;
+  bool overflow;
+} mb_tiny_rtu_rx_t;
+
+typedef struct {
   uint8_t slave_id;
   uint32_t timeout_ms;
 
@@ -140,6 +151,36 @@ typedef struct {
   uint32_t error_count;
   bool initialized;
 } mb_tiny_master_t;
+
+/* ==================== RTU receive framing API ==================== */
+
+/**
+ * Return a conservative whole-millisecond t3.5 interval. bits_per_char includes
+ * start, data, parity (when used), and stop bits and must be in 8..12.
+ */
+uint16_t mb_tiny_rtu_frame_gap_ms(uint32_t baud_rate, uint8_t bits_per_char);
+
+/**
+ * Initialize a main-loop RTU receiver. frame_gap_ms is the rounded-up t3.5
+ * silence interval and must be nonzero.
+ */
+int mb_tiny_rtu_rx_init(mb_tiny_rtu_rx_t *rx, uint16_t frame_gap_ms);
+
+/**
+ * Feed one UART byte in main-loop context with its receive timestamp. The UART
+ * ISR should only place bytes and timestamps in an application-owned ring.
+ */
+int mb_tiny_rtu_rx_feed(mb_tiny_rtu_rx_t *rx, uint8_t byte, uint32_t now_ms);
+
+/**
+ * Finish a frame after t3.5 silence. Returns MB_TINY_FRAME_READY and copies the
+ * ADU on success, MB_TINY_IGNORED while receiving, or a local error.
+ */
+int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
+                        uint16_t frame_capacity, uint16_t *frame_len);
+
+void mb_tiny_rtu_rx_reset(mb_tiny_rtu_rx_t *rx);
+bool mb_tiny_rtu_rx_is_idle(const mb_tiny_rtu_rx_t *rx);
 
 /* ==================== Slave API ==================== */
 
@@ -182,8 +223,14 @@ void mb_tiny_master_set_timeout(mb_tiny_master_t *master, uint32_t timeout_ms);
 
 int mb_tiny_master_read_holding(mb_tiny_master_t *master, uint8_t slave_id,
                                 uint16_t addr, uint16_t count, uint16_t *data);
+int mb_tiny_master_read_holding_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                   uint16_t addr, uint16_t count,
+                                   uint16_t *data, uint16_t data_capacity);
 int mb_tiny_master_read_input(mb_tiny_master_t *master, uint8_t slave_id,
                               uint16_t addr, uint16_t count, uint16_t *data);
+int mb_tiny_master_read_input_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                 uint16_t addr, uint16_t count, uint16_t *data,
+                                 uint16_t data_capacity);
 int mb_tiny_master_write_reg(mb_tiny_master_t *master, uint8_t slave_id,
                              uint16_t addr, uint16_t value);
 int mb_tiny_master_write_regs(mb_tiny_master_t *master, uint8_t slave_id,
@@ -191,8 +238,14 @@ int mb_tiny_master_write_regs(mb_tiny_master_t *master, uint8_t slave_id,
                               const uint16_t *data);
 int mb_tiny_master_read_coils(mb_tiny_master_t *master, uint8_t slave_id,
                               uint16_t addr, uint16_t count, uint8_t *data);
+int mb_tiny_master_read_coils_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                 uint16_t addr, uint16_t count, uint8_t *data,
+                                 uint16_t data_capacity);
 int mb_tiny_master_read_discrete(mb_tiny_master_t *master, uint8_t slave_id,
                                  uint16_t addr, uint16_t count, uint8_t *data);
+int mb_tiny_master_read_discrete_ex(mb_tiny_master_t *master, uint8_t slave_id,
+                                    uint16_t addr, uint16_t count,
+                                    uint8_t *data, uint16_t data_capacity);
 int mb_tiny_master_write_coil(mb_tiny_master_t *master, uint8_t slave_id,
                               uint16_t addr, uint16_t value);
 int mb_tiny_master_write_coils(mb_tiny_master_t *master, uint8_t slave_id,
