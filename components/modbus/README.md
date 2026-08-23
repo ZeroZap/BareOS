@@ -42,8 +42,13 @@ for the UART transmission-complete ISR to set a flag. The main loop then calls
 `mb_tiny_rtu_tx_process()` to deassert DE. It also restores receive direction on
 start failure, timeout, or explicit abort.
 
-The component does **not** validate `t1.5` mid-frame gaps or provide a
-non-blocking master transaction state machine.
+`mb_tiny_rtu_master_t` provides a non-blocking raw-ADU master transaction state
+machine. It sends through the same RS-485 TX object, starts the response timeout
+after TX-complete restores receive direction, consumes a timestamped response
+from the RX queue, and validates CRC, unit ID, function code, and exception
+shape. Function-specific non-blocking convenience wrappers remain future work.
+
+The component does **not** validate `t1.5` mid-frame gaps.
 
 The synchronous master receive callback can wait up to `timeout_ms`. Do not call
 these wrappers from BareOS's cooperative main loop when blocking would delay AT
@@ -168,6 +173,64 @@ helper only advances TX completion or timeout handling and leaves queued RX
 bytes untouched. Broadcast writes execute without starting TX; requests for a
 different unit are ignored.
 
+## Non-blocking master transactions
+
+```c
+static mb_tiny_rtu_master_t rtu_master;
+
+void modbus_master_init(void)
+{
+    mb_tiny_rtu_master_init(
+        &rtu_master, &rx_queue, &rtu_rx, &rtu_tx, 1000U);
+}
+
+int modbus_read_holding_start(uint8_t unit, uint16_t address, uint16_t count)
+{
+    uint8_t request[8];
+    uint16_t crc;
+
+    request[0] = unit;
+    request[1] = MB_FUNC_READ_HOLDING;
+    request[2] = (uint8_t)(address >> 8);
+    request[3] = (uint8_t)address;
+    request[4] = (uint8_t)(count >> 8);
+    request[5] = (uint8_t)count;
+    crc = mb_tiny_crc16(request, 6U);
+    request[6] = (uint8_t)crc;
+    request[7] = (uint8_t)(crc >> 8);
+
+    return mb_tiny_rtu_master_start(
+        &rtu_master, request, sizeof(request), g_sys_tick_ms);
+}
+
+void modbus_master_process(void)
+{
+    int status = mb_tiny_rtu_master_process(&rtu_master, g_sys_tick_ms);
+
+    if (status == MB_TINY_OK || status == MB_TINY_EXCEPTION) {
+        uint8_t response[MB_TINY_MAX_ADU_SIZE];
+        uint16_t response_len;
+
+        (void)mb_tiny_rtu_master_get_response(
+            &rtu_master, response, sizeof(response), &response_len);
+        mb_tiny_rtu_master_reset(&rtu_master);
+    } else if (status < 0 && status != MB_TINY_BUSY) {
+        mb_tiny_rtu_master_reset(&rtu_master);
+    }
+}
+```
+
+Only unicast request ADUs are accepted. The request CRC is checked before TX,
+and a new transaction requires idle TX, RX framing, and RX queue objects. A
+completed transaction remains in `MB_TINY_RTU_MASTER_DONE` so the response and
+`last_exception` remain available. Call `mb_tiny_rtu_master_reset()` after
+handling the result. Use `mb_tiny_rtu_master_abort()` for an active transaction;
+it restores receive direction and flushes partial or queued response bytes.
+
+The response timeout starts only after the final request stop bit has been sent
+and DE has been deasserted. This prevents slow request transmission from using
+up the slave response window.
+
 ## Addressing and data layout
 
 Addresses are zero-based PDU addresses. Human-readable addresses such as
@@ -265,5 +328,4 @@ sanitizers are optional rather than enabled by default.
 
 ## Remaining work
 
-- Add a non-blocking master transaction state machine driven by the shared
-  BareOS time source.
+- Add function-specific builders and decoders for the non-blocking master API.

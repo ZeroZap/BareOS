@@ -171,6 +171,31 @@ typedef struct {
   uint32_t error_count;
 } mb_tiny_rtu_tx_t;
 
+typedef enum {
+  MB_TINY_RTU_MASTER_IDLE = 0,
+  MB_TINY_RTU_MASTER_TRANSMITTING,
+  MB_TINY_RTU_MASTER_WAITING_RESPONSE,
+  MB_TINY_RTU_MASTER_DONE
+} mb_tiny_rtu_master_state_t;
+
+typedef struct {
+  mb_tiny_rtu_rx_queue_t *queue;
+  mb_tiny_rtu_rx_t *rx;
+  mb_tiny_rtu_tx_t *tx;
+  uint8_t response[MB_TINY_MAX_ADU_SIZE];
+  uint16_t response_len;
+  uint32_t response_started_ms;
+  uint32_t response_timeout_ms;
+  uint8_t slave_id;
+  uint8_t function;
+  uint8_t last_exception;
+  int result;
+  mb_tiny_rtu_master_state_t state;
+  uint32_t completed_count;
+  uint32_t error_count;
+  bool initialized;
+} mb_tiny_rtu_master_t;
+
 typedef struct {
   uint8_t slave_id;
   uint32_t timeout_ms;
@@ -272,6 +297,31 @@ int mb_tiny_rtu_slave_poll(mb_tiny_slave_t *slave,
                            mb_tiny_rtu_tx_t *tx, uint32_t now_ms,
                            uint8_t *request, uint16_t request_capacity,
                            uint8_t *response, uint16_t response_capacity);
+
+/* ==================== Non-blocking RTU master API ==================== */
+
+int mb_tiny_rtu_master_init(mb_tiny_rtu_master_t *master,
+                            mb_tiny_rtu_rx_queue_t *queue, mb_tiny_rtu_rx_t *rx,
+                            mb_tiny_rtu_tx_t *tx, uint32_t response_timeout_ms);
+
+/** Start one complete unicast RTU request ADU. */
+int mb_tiny_rtu_master_start(mb_tiny_rtu_master_t *master,
+                             const uint8_t *request, uint16_t request_len,
+                             uint32_t now_ms);
+
+/** Advance TX, response framing, validation, and timeout handling. */
+int mb_tiny_rtu_master_process(mb_tiny_rtu_master_t *master, uint32_t now_ms);
+
+/** Copy the completed raw response ADU. */
+int mb_tiny_rtu_master_get_response(const mb_tiny_rtu_master_t *master,
+                                    uint8_t *response,
+                                    uint16_t response_capacity,
+                                    uint16_t *response_len);
+
+/** Abort any active transaction and return to idle. */
+int mb_tiny_rtu_master_abort(mb_tiny_rtu_master_t *master);
+void mb_tiny_rtu_master_reset(mb_tiny_rtu_master_t *master);
+bool mb_tiny_rtu_master_is_idle(const mb_tiny_rtu_master_t *master);
 
 /* ==================== Slave API ==================== */
 

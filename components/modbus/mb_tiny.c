@@ -454,6 +454,207 @@ int mb_tiny_rtu_tx_process(mb_tiny_rtu_tx_t *tx, uint32_t now_ms) {
   return MB_TINY_OK;
 }
 
+/* ==================== Non-blocking RTU master ==================== */
+
+int mb_tiny_rtu_master_init(mb_tiny_rtu_master_t *master,
+                            mb_tiny_rtu_rx_queue_t *queue, mb_tiny_rtu_rx_t *rx,
+                            mb_tiny_rtu_tx_t *tx,
+                            uint32_t response_timeout_ms) {
+  if (master == NULL || queue == NULL || rx == NULL || tx == NULL ||
+      response_timeout_ms == 0U || queue->slots == NULL ||
+      queue->capacity < 2U || rx->frame_gap_ms == 0U || !tx->initialized) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  memset(master, 0, sizeof(*master));
+  master->queue = queue;
+  master->rx = rx;
+  master->tx = tx;
+  master->response_timeout_ms = response_timeout_ms;
+  master->state = MB_TINY_RTU_MASTER_IDLE;
+  master->initialized = true;
+  return MB_TINY_OK;
+}
+
+bool mb_tiny_rtu_master_is_idle(const mb_tiny_rtu_master_t *master) {
+  return master != NULL && master->initialized &&
+         master->state == MB_TINY_RTU_MASTER_IDLE;
+}
+
+void mb_tiny_rtu_master_reset(mb_tiny_rtu_master_t *master) {
+  if (master != NULL && master->initialized &&
+      master->state == MB_TINY_RTU_MASTER_DONE) {
+    master->response_len = 0U;
+    master->last_exception = 0U;
+    master->result = MB_TINY_OK;
+    master->state = MB_TINY_RTU_MASTER_IDLE;
+  }
+}
+
+static int mb_tiny_rtu_master_finish(mb_tiny_rtu_master_t *master, int result) {
+  master->result = result;
+  master->state = MB_TINY_RTU_MASTER_DONE;
+  if (result == MB_TINY_OK || result == MB_TINY_EXCEPTION) {
+    master->completed_count++;
+  } else {
+    master->error_count++;
+  }
+  return result;
+}
+
+int mb_tiny_rtu_master_start(mb_tiny_rtu_master_t *master,
+                             const uint8_t *request, uint16_t request_len,
+                             uint32_t now_ms) {
+  int ret;
+
+  if (master == NULL || request == NULL || request_len < MB_TINY_MIN_ADU_SIZE ||
+      request_len > MB_TINY_MAX_ADU_SIZE) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (master->state != MB_TINY_RTU_MASTER_IDLE) {
+    return MB_TINY_BUSY;
+  }
+  if (request[0] == 0U || !mb_unit_id_is_valid(request[0])) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!mb_frame_crc_is_valid(request, request_len)) {
+    return MB_TINY_CRC_ERROR;
+  }
+  if (!mb_tiny_rtu_rx_queue_is_idle(master->queue, master->rx) ||
+      !mb_tiny_rtu_tx_is_idle(master->tx)) {
+    return MB_TINY_BUSY;
+  }
+
+  master->slave_id = request[0];
+  master->function = request[1];
+  master->last_exception = 0U;
+  master->response_len = 0U;
+  master->result = MB_TINY_BUSY;
+  ret = mb_tiny_rtu_tx_start(master->tx, request, request_len, now_ms);
+  if (ret != MB_TINY_OK) {
+    master->error_count++;
+    return ret;
+  }
+  master->state = MB_TINY_RTU_MASTER_TRANSMITTING;
+  return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_master_abort(mb_tiny_rtu_master_t *master) {
+  int ret;
+
+  if (master == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+
+  ret = MB_TINY_OK;
+  if (master->state == MB_TINY_RTU_MASTER_TRANSMITTING) {
+    ret = mb_tiny_rtu_tx_abort(master->tx);
+  }
+  mb_tiny_rtu_rx_reset(master->rx);
+  master->queue->tail = master->queue->head;
+  master->queue->handled_dropped_bytes = master->queue->dropped_bytes;
+  master->response_len = 0U;
+  master->last_exception = 0U;
+  master->result = ret;
+  master->state = MB_TINY_RTU_MASTER_IDLE;
+  return ret;
+}
+
+int mb_tiny_rtu_master_process(mb_tiny_rtu_master_t *master, uint32_t now_ms) {
+  uint16_t response_len;
+  int ret;
+
+  if (master == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (master->state == MB_TINY_RTU_MASTER_IDLE) {
+    return MB_TINY_IGNORED;
+  }
+  if (master->state == MB_TINY_RTU_MASTER_DONE) {
+    return master->result;
+  }
+
+  if (master->state == MB_TINY_RTU_MASTER_TRANSMITTING) {
+    ret = mb_tiny_rtu_tx_process(master->tx, now_ms);
+    if (ret == MB_TINY_BUSY) {
+      return MB_TINY_BUSY;
+    }
+    if (ret != MB_TINY_OK) {
+      return mb_tiny_rtu_master_finish(master, ret);
+    }
+    master->response_started_ms = now_ms;
+    master->state = MB_TINY_RTU_MASTER_WAITING_RESPONSE;
+  }
+
+  ret = mb_tiny_rtu_rx_queue_process(master->queue, master->rx, now_ms,
+                                     master->response, MB_TINY_MAX_ADU_SIZE,
+                                     &response_len);
+  if (ret == MB_TINY_FRAME_READY) {
+    master->response_len = response_len;
+    if (!mb_frame_crc_is_valid(master->response, response_len)) {
+      return mb_tiny_rtu_master_finish(master, MB_TINY_CRC_ERROR);
+    }
+    if (master->response[0] != master->slave_id) {
+      return mb_tiny_rtu_master_finish(master, MB_TINY_FRAME_ERROR);
+    }
+    if (master->response[1] == (uint8_t)(master->function | 0x80U)) {
+      if (response_len != 5U) {
+        return mb_tiny_rtu_master_finish(master, MB_TINY_FRAME_ERROR);
+      }
+      master->last_exception = master->response[2];
+      return mb_tiny_rtu_master_finish(master, MB_TINY_EXCEPTION);
+    }
+    if (master->response[1] != master->function) {
+      return mb_tiny_rtu_master_finish(master, MB_TINY_FRAME_ERROR);
+    }
+    return mb_tiny_rtu_master_finish(master, MB_TINY_OK);
+  }
+  if (ret != MB_TINY_IGNORED) {
+    return mb_tiny_rtu_master_finish(master, ret);
+  }
+  if ((uint32_t)(now_ms - master->response_started_ms) >=
+      master->response_timeout_ms) {
+    mb_tiny_rtu_rx_reset(master->rx);
+    return mb_tiny_rtu_master_finish(master, MB_TINY_TIMEOUT);
+  }
+  return MB_TINY_BUSY;
+}
+
+int mb_tiny_rtu_master_get_response(const mb_tiny_rtu_master_t *master,
+                                    uint8_t *response,
+                                    uint16_t response_capacity,
+                                    uint16_t *response_len) {
+  if (master == NULL || response == NULL || response_len == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  *response_len = 0U;
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (master->state != MB_TINY_RTU_MASTER_DONE) {
+    return MB_TINY_BUSY;
+  }
+  if (master->response_len == 0U) {
+    return master->result;
+  }
+  if (response_capacity < master->response_len) {
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+
+  memcpy(response, master->response, master->response_len);
+  *response_len = master->response_len;
+  return master->result;
+}
+
 int mb_tiny_rtu_slave_poll(mb_tiny_slave_t *slave,
                            mb_tiny_rtu_rx_queue_t *queue, mb_tiny_rtu_rx_t *rx,
                            mb_tiny_rtu_tx_t *tx, uint32_t now_ms,
