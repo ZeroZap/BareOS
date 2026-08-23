@@ -134,6 +134,7 @@ static void test_rtu_receive_framing(void) {
   CHECK_EQ(mb_tiny_rtu_rx_poll(&rx, 25U, frame, sizeof(frame), &frame_len),
            MB_TINY_FRAME_ERROR);
   CHECK_EQ(rx.dropped_frames, 1U);
+  CHECK_EQ(rx.last_error, MB_TINY_RTU_RX_ERROR_SHORT_FRAME);
 
   for (i = 0U; i < MB_TINY_MAX_ADU_SIZE; i++) {
     CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, (uint8_t)i, (uint32_t)(30U + i)),
@@ -155,6 +156,7 @@ static void test_rtu_receive_framing(void) {
                                frame, sizeof(frame), &frame_len),
            MB_TINY_BUFFER_TOO_SMALL);
   CHECK_EQ(rx.dropped_frames, 2U);
+  CHECK_EQ(rx.last_error, MB_TINY_RTU_RX_ERROR_ADU_OVERFLOW);
   CHECK(mb_tiny_rtu_rx_is_idle(&rx));
 
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x11U, 400U), MB_TINY_OK);
@@ -162,6 +164,7 @@ static void test_rtu_receive_framing(void) {
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x33U, 402U), MB_TINY_OK);
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x44U, 406U), MB_TINY_FRAME_ERROR);
   CHECK_EQ(rx.dropped_frames, 3U);
+  CHECK_EQ(rx.last_error, MB_TINY_RTU_RX_ERROR_MISSED_FRAME);
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x55U, 407U), MB_TINY_OK);
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x66U, 408U), MB_TINY_OK);
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x77U, 409U), MB_TINY_OK);
@@ -192,6 +195,7 @@ static void test_rtu_strict_inter_char_gap(void) {
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x11U, 11U), MB_TINY_OK);
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x12U, 14U), MB_TINY_FRAME_ERROR);
   CHECK(rx.invalid);
+  CHECK_EQ(rx.last_error, MB_TINY_RTU_RX_ERROR_INTER_CHAR);
   CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x13U, 15U), MB_TINY_IGNORED);
   CHECK_EQ(mb_tiny_rtu_rx_poll(&rx, 19U, frame, sizeof(frame), &frame_len),
            MB_TINY_IGNORED);
@@ -306,6 +310,7 @@ static void test_rtu_receive_queue(void) {
                                         &frame_len),
            MB_TINY_FRAME_ERROR);
   CHECK_EQ(mb_tiny_rtu_rx_queue_pending(&queue), 0U);
+  CHECK_EQ(rx.last_error, MB_TINY_RTU_RX_ERROR_QUEUE_OVERFLOW);
   CHECK(mb_tiny_rtu_rx_queue_is_idle(&queue, &rx));
 
   for (i = 0U; i < 4U; i++) {

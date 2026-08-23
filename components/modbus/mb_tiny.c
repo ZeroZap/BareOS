@@ -186,9 +186,11 @@ int mb_tiny_rtu_rx_feed(mb_tiny_rtu_rx_t *rx, uint8_t byte, uint32_t now_ms) {
                      silence_ms >= rx->inter_char_gap_ms;
   if (missed_frame) {
     rx->dropped_frames++;
+    rx->last_error = MB_TINY_RTU_RX_ERROR_MISSED_FRAME;
     mb_tiny_rtu_rx_reset(rx);
   } else if (inter_char_error) {
     rx->invalid = true;
+    rx->last_error = MB_TINY_RTU_RX_ERROR_INTER_CHAR;
   }
 
   rx->receiving = true;
@@ -204,6 +206,7 @@ int mb_tiny_rtu_rx_feed(mb_tiny_rtu_rx_t *rx, uint8_t byte, uint32_t now_ms) {
   }
   if (rx->len >= MB_TINY_MAX_ADU_SIZE) {
     rx->overflow = true;
+    rx->last_error = MB_TINY_RTU_RX_ERROR_ADU_OVERFLOW;
     return MB_TINY_BUFFER_TOO_SMALL;
   }
   rx->data[rx->len++] = byte;
@@ -233,6 +236,7 @@ int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
   }
   if (rx->len < MB_TINY_MIN_ADU_SIZE) {
     rx->dropped_frames++;
+    rx->last_error = MB_TINY_RTU_RX_ERROR_SHORT_FRAME;
     mb_tiny_rtu_rx_reset(rx);
     return MB_TINY_FRAME_ERROR;
   }
@@ -343,6 +347,7 @@ int mb_tiny_rtu_rx_queue_process(mb_tiny_rtu_rx_queue_t *queue,
     queue->tail = queue->head;
     mb_tiny_rtu_rx_reset(rx);
     rx->dropped_frames++;
+    rx->last_error = MB_TINY_RTU_RX_ERROR_QUEUE_OVERFLOW;
     return MB_TINY_FRAME_ERROR;
   }
 

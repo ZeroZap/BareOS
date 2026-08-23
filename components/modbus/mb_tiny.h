@@ -132,6 +132,15 @@ typedef struct {
   bool initialized;
 } mb_tiny_slave_t;
 
+typedef enum {
+  MB_TINY_RTU_RX_ERROR_NONE = 0,
+  MB_TINY_RTU_RX_ERROR_INTER_CHAR,
+  MB_TINY_RTU_RX_ERROR_MISSED_FRAME,
+  MB_TINY_RTU_RX_ERROR_SHORT_FRAME,
+  MB_TINY_RTU_RX_ERROR_ADU_OVERFLOW,
+  MB_TINY_RTU_RX_ERROR_QUEUE_OVERFLOW
+} mb_tiny_rtu_rx_error_t;
+
 typedef struct {
   uint8_t data[MB_TINY_MAX_ADU_SIZE];
   uint16_t len;
@@ -139,6 +148,7 @@ typedef struct {
   uint16_t frame_gap_ms;
   uint32_t last_byte_ms;
   uint32_t dropped_frames;
+  mb_tiny_rtu_rx_error_t last_error;
   bool receiving;
   bool overflow;
   bool invalid;

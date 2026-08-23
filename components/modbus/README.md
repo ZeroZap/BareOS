@@ -113,6 +113,11 @@ the BSP must serialize them. Queue overflow increments `dropped_bytes`; the
 main-loop processor then discards the affected queued data and resets the
 partial frame instead of risking execution of a truncated request.
 
+`rtu_rx.dropped_frames` counts rejected receive frames and `rtu_rx.last_error`
+retains the most recent reason: inter-character violation, missed frame, short
+frame, ADU overflow, or ISR queue overflow. Receiver reset intentionally keeps
+this diagnostic value; reinitialization clears it.
+
 Call `mb_tiny_rtu_rx_queue_is_idle()` from power-management eligibility logic.
 Do not enter a sleep mode that stops the UART or shared timestamp source while
 it reports busy.
