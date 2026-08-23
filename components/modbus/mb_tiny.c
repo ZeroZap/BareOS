@@ -104,6 +104,12 @@ static void mb_coil_set(mb_tiny_coils_t *map, uint16_t address, bool value) {
 
 /* ==================== RTU receive framing ==================== */
 
+static void mb_tiny_compiler_barrier(void) {
+#if defined(__GNUC__) || defined(__clang__)
+  __asm__ volatile("" ::: "memory");
+#endif
+}
+
 uint16_t mb_tiny_rtu_frame_gap_ms(uint32_t baud_rate, uint8_t bits_per_char) {
   uint32_t numerator;
   uint32_t gap_ms;
@@ -198,6 +204,132 @@ int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
   *frame_len = rx->len;
   mb_tiny_rtu_rx_reset(rx);
   return MB_TINY_FRAME_READY;
+}
+
+int mb_tiny_rtu_rx_queue_init(mb_tiny_rtu_rx_queue_t *queue,
+                              mb_tiny_rtu_rx_slot_t *slots,
+                              uint16_t slot_count) {
+  if (queue == NULL || slots == NULL || slot_count < 2U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  memset(queue, 0, sizeof(*queue));
+  queue->slots = slots;
+  queue->capacity = slot_count;
+  return MB_TINY_OK;
+}
+
+uint16_t mb_tiny_rtu_rx_queue_pending(const mb_tiny_rtu_rx_queue_t *queue) {
+  uint16_t head;
+  uint16_t tail;
+
+  if (queue == NULL || queue->slots == NULL || queue->capacity < 2U) {
+    return 0U;
+  }
+  head = queue->head;
+  tail = queue->tail;
+  return head >= tail ? (uint16_t)(head - tail)
+                      : (uint16_t)(queue->capacity - tail + head);
+}
+
+bool mb_tiny_rtu_rx_queue_is_idle(const mb_tiny_rtu_rx_queue_t *queue,
+                                  const mb_tiny_rtu_rx_t *rx) {
+  return queue != NULL && rx != NULL &&
+         mb_tiny_rtu_rx_queue_pending(queue) == 0U &&
+         mb_tiny_rtu_rx_is_idle(rx);
+}
+
+int mb_tiny_rtu_rx_queue_push_isr(mb_tiny_rtu_rx_queue_t *queue, uint8_t byte,
+                                  uint32_t timestamp_ms) {
+  uint16_t head;
+  uint16_t next;
+
+  if (queue == NULL || queue->slots == NULL || queue->capacity < 2U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  head = queue->head;
+  next = (uint16_t)(head + 1U);
+  if (next >= queue->capacity) {
+    next = 0U;
+  }
+  if (next == queue->tail) {
+    queue->dropped_bytes++;
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+
+  queue->slots[head].timestamp_ms = timestamp_ms;
+  queue->slots[head].byte = byte;
+  mb_tiny_compiler_barrier();
+  queue->head = next;
+  return MB_TINY_OK;
+}
+
+static bool mb_tiny_rtu_rx_queue_peek(const mb_tiny_rtu_rx_queue_t *queue,
+                                      mb_tiny_rtu_rx_slot_t *slot) {
+  if (queue->tail == queue->head) {
+    return false;
+  }
+  mb_tiny_compiler_barrier();
+  *slot = queue->slots[queue->tail];
+  return true;
+}
+
+static void mb_tiny_rtu_rx_queue_consume(mb_tiny_rtu_rx_queue_t *queue) {
+  uint16_t tail;
+
+  tail = (uint16_t)(queue->tail + 1U);
+  if (tail >= queue->capacity) {
+    tail = 0U;
+  }
+  queue->tail = tail;
+}
+
+int mb_tiny_rtu_rx_queue_process(mb_tiny_rtu_rx_queue_t *queue,
+                                 mb_tiny_rtu_rx_t *rx, uint32_t now_ms,
+                                 uint8_t *frame, uint16_t frame_capacity,
+                                 uint16_t *frame_len) {
+  mb_tiny_rtu_rx_slot_t slot;
+  int ret;
+
+  if (queue == NULL || rx == NULL || frame == NULL || frame_len == NULL ||
+      queue->slots == NULL || queue->capacity < 2U || rx->frame_gap_ms == 0U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  *frame_len = 0U;
+
+  if (queue->handled_dropped_bytes != queue->dropped_bytes) {
+    queue->handled_dropped_bytes = queue->dropped_bytes;
+    queue->tail = queue->head;
+    mb_tiny_rtu_rx_reset(rx);
+    rx->dropped_frames++;
+    return MB_TINY_FRAME_ERROR;
+  }
+
+  while (mb_tiny_rtu_rx_queue_peek(queue, &slot)) {
+    if (rx->receiving &&
+        (uint32_t)(slot.timestamp_ms - rx->last_byte_ms) >= rx->frame_gap_ms) {
+      ret = mb_tiny_rtu_rx_poll(rx, slot.timestamp_ms, frame, frame_capacity,
+                                frame_len);
+      if (ret != MB_TINY_FRAME_READY) {
+        return ret;
+      }
+      ret = mb_tiny_rtu_rx_feed(rx, slot.byte, slot.timestamp_ms);
+      if (ret != MB_TINY_OK) {
+        return ret;
+      }
+      mb_tiny_rtu_rx_queue_consume(queue);
+      return MB_TINY_FRAME_READY;
+    }
+
+    ret = mb_tiny_rtu_rx_feed(rx, slot.byte, slot.timestamp_ms);
+    if (ret != MB_TINY_OK) {
+      return ret;
+    }
+    mb_tiny_rtu_rx_queue_consume(queue);
+  }
+
+  return mb_tiny_rtu_rx_poll(rx, now_ms, frame, frame_capacity, frame_len);
 }
 
 /* ==================== Slave implementation ==================== */

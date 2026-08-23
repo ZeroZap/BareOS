@@ -135,6 +135,21 @@ typedef struct {
 } mb_tiny_rtu_rx_t;
 
 typedef struct {
+  uint32_t timestamp_ms;
+  uint8_t byte;
+} mb_tiny_rtu_rx_slot_t;
+
+/** Single-UART-ISR producer, main-loop consumer queue. */
+typedef struct {
+  mb_tiny_rtu_rx_slot_t *slots;
+  uint16_t capacity;
+  volatile uint16_t head;
+  volatile uint16_t tail;
+  volatile uint32_t dropped_bytes;
+  uint32_t handled_dropped_bytes;
+} mb_tiny_rtu_rx_queue_t;
+
+typedef struct {
   uint8_t slave_id;
   uint32_t timeout_ms;
 
@@ -181,6 +196,30 @@ int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
 
 void mb_tiny_rtu_rx_reset(mb_tiny_rtu_rx_t *rx);
 bool mb_tiny_rtu_rx_is_idle(const mb_tiny_rtu_rx_t *rx);
+
+/** Initialize an application-storage-backed SPSC queue. One slot is reserved.
+ */
+int mb_tiny_rtu_rx_queue_init(mb_tiny_rtu_rx_queue_t *queue,
+                              mb_tiny_rtu_rx_slot_t *slots,
+                              uint16_t slot_count);
+
+/** Enqueue one timestamped byte from the single UART RX ISR. */
+int mb_tiny_rtu_rx_queue_push_isr(mb_tiny_rtu_rx_queue_t *queue, uint8_t byte,
+                                  uint32_t timestamp_ms);
+
+/**
+ * Drain queued bytes in main-loop context and return at most one completed ADU.
+ * now_ms is used only when no later queued byte is available to delimit a
+ * frame.
+ */
+int mb_tiny_rtu_rx_queue_process(mb_tiny_rtu_rx_queue_t *queue,
+                                 mb_tiny_rtu_rx_t *rx, uint32_t now_ms,
+                                 uint8_t *frame, uint16_t frame_capacity,
+                                 uint16_t *frame_len);
+
+uint16_t mb_tiny_rtu_rx_queue_pending(const mb_tiny_rtu_rx_queue_t *queue);
+bool mb_tiny_rtu_rx_queue_is_idle(const mb_tiny_rtu_rx_queue_t *queue,
+                                  const mb_tiny_rtu_rx_t *rx);
 
 /* ==================== Slave API ==================== */
 

@@ -29,10 +29,15 @@ UART bytes from the main loop with `mb_tiny_rtu_rx_feed()`, then call
 `mb_tiny_rtu_frame_gap_ms()` calculates a conservative whole-millisecond gap
 without floating point.
 
-The UART ISR should still only write bytes and timestamps to an
-application-owned ring buffer. The component does **not** own that ISR ring,
-control an RS-485 DE pin, validate `t1.5` mid-frame gaps, or provide a
-non-blocking master transaction state machine.
+`mb_tiny_rtu_rx_queue_t` is an optional ISR-to-main-loop SPSC adapter. Its
+storage is application-owned, so queue RAM can be selected for the UART baud
+rate and worst-case main-loop latency. The single UART RX ISR calls
+`mb_tiny_rtu_rx_queue_push_isr()` with the timestamp captured when the byte was
+received. The main loop calls `mb_tiny_rtu_rx_queue_process()`; queued timestamps
+allow it to separate multiple complete frames even when processing is delayed.
+
+The component does **not** control an RS-485 DE pin, validate `t1.5` mid-frame
+gaps, or provide a non-blocking master transaction state machine.
 
 The synchronous master receive callback can wait up to `timeout_ms`. Do not call
 these wrappers from BareOS's cooperative main loop when blocking would delay AT
@@ -44,6 +49,50 @@ specified in registers; coil and discrete-input capacities are specified in
 bytes. They reject undersized output buffers before starting UART IO. The legacy
 read APIs remain source-compatible, but callers should prefer `_ex` when the
 actual destination capacity is known.
+
+## ISR queue integration
+
+```c
+static mb_tiny_rtu_rx_slot_t rx_slots[64];
+static mb_tiny_rtu_rx_queue_t rx_queue;
+static mb_tiny_rtu_rx_t rtu_rx;
+
+void modbus_init(void)
+{
+    uint16_t gap = mb_tiny_rtu_frame_gap_ms(9600U, 11U);
+    mb_tiny_rtu_rx_init(&rtu_rx, gap);
+    mb_tiny_rtu_rx_queue_init(&rx_queue, rx_slots, 64U);
+}
+
+void modbus_uart_rx_isr(uint8_t byte)
+{
+    (void)mb_tiny_rtu_rx_queue_push_isr(&rx_queue, byte, g_sys_tick_ms);
+}
+
+void modbus_process(void)
+{
+    uint8_t request[MB_TINY_MAX_ADU_SIZE];
+    uint16_t request_len;
+    int status;
+
+    status = mb_tiny_rtu_rx_queue_process(
+        &rx_queue, &rtu_rx, g_sys_tick_ms,
+        request, sizeof(request), &request_len);
+    if (status == MB_TINY_FRAME_READY) {
+        (void)mb_tiny_slave_handle(&slave, request, request_len);
+    }
+}
+```
+
+The queue reserves one slot, so an array of 64 slots holds at most 63 bytes.
+Only one ISR may produce into an instance. If multiple producers are required,
+the BSP must serialize them. Queue overflow increments `dropped_bytes`; the
+main-loop processor then discards the affected queued data and resets the
+partial frame instead of risking execution of a truncated request.
+
+Call `mb_tiny_rtu_rx_queue_is_idle()` from power-management eligibility logic.
+Do not enter a sleep mode that stops the UART or shared timestamp source while
+it reports busy.
 
 ## Addressing and data layout
 
@@ -142,7 +191,6 @@ sanitizers are optional rather than enabled by default.
 
 ## Remaining work
 
-- Add an ISR-safe UART byte/timestamp SPSC adapter around the RTU frame receiver.
 - Add RS-485 DE control and TX-complete handling.
 - Add a non-blocking master transaction state machine driven by the shared
   BareOS time source.
