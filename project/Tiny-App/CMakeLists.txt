@@ -214,6 +214,27 @@ set_tests_properties(bareos_tests_all PROPERTIES
     TIMEOUT 30
 )
 
+add_executable(wifi_esp_at_tests
+    ${COMP_SRCS}
+    tests/test_wifi_esp_at.c
+    tests/test_bsp_stub.c
+)
+target_include_directories(wifi_esp_at_tests PRIVATE
+    ${INCDIRS}
+    tests
+)
+target_compile_definitions(wifi_esp_at_tests PRIVATE ${COMP_DEFS})
+if(WIN32)
+    target_link_libraries(wifi_esp_at_tests PRIVATE crypt32)
+else()
+    target_compile_options(wifi_esp_at_tests PRIVATE -Wno-unused-function)
+endif()
+add_test(NAME wifi_esp_at_tests COMMAND wifi_esp_at_tests)
+set_tests_properties(wifi_esp_at_tests PROPERTIES
+    LABELS  "wifi;esp32;esp-at"
+    TIMEOUT 10
+)
+
 add_executable(pm_tickless_tests
     ${COMP}/pm/xy_pm.c
     ${COMP}/tick/xy_tick.c

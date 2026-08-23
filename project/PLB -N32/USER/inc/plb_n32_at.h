@@ -12,6 +12,7 @@ bool plb_n32_at_init(void);
 bool plb_n32_at_selftest_start(void);
 void plb_n32_at_process(void);
 at_obj_t *plb_n32_at_obj(void);
+bool plb_n32_at_pm_can_sleep(void *arg);
 
 #ifdef __cplusplus
 }

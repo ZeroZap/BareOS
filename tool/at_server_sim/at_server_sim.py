@@ -49,6 +49,22 @@ class SimulatorConfig:
     drop_prompt: bool = False
     send_result: str = "ok"
     urc_fault: str = "none"
+    urc_burst_count: int = 32
+    urc_recovery_delay_ms: int = 700
+    urc_overflow_payload_size: int = 300
+    interleave_urc_on_csq: bool = False
+    interleave_urc_before_prompt: bool = False
+    interleave_urc_before_send_result: bool = False
+    fake_prompt_urc_delay_ms: int = 0
+    fake_send_ok_urc_delay_ms: int = 0
+    fake_error_urc_delay_ms: int = 0
+    partial_error_urc_delay_ms: int = 0
+    partial_error_tail_delay_ms: int = 0
+    partial_send_ok_urc_delay_ms: int = 0
+    partial_send_ok_tail_delay_ms: int = 0
+    late_response_isolation: bool = False
+    late_first_delay_ms: int = 700
+    late_retry_delay_ms: int = 300
 
 
 class ATServerSimulator:
@@ -95,6 +111,26 @@ class ATServerSimulator:
                     head = payload[:32].hex(" ")
                     self.log(f"RX DATA ({len(payload)}) sha256={digest} head={head}")
                     self.raw_buffer.clear()
+                    if self.config.interleave_urc_before_send_result:
+                        self.inject(self.receive_urc(0, b"HELLO"))
+                    if self.config.fake_send_ok_urc_delay_ms > 0:
+                        self.inject(self.receive_urc(0, b"SEND OK"))
+                        self.sleep(self.config.fake_send_ok_urc_delay_ms / 1000.0)
+                    if self.config.fake_error_urc_delay_ms > 0:
+                        self.inject(self.receive_urc(0, b"ERROR"))
+                        self.sleep(self.config.fake_error_urc_delay_ms / 1000.0)
+                    if self.config.partial_error_urc_delay_ms > 0:
+                        self.inject(self.receive_urc(0, b"ERROR")[:-2])
+                        self.sleep(self.config.partial_error_urc_delay_ms / 1000.0)
+                    if self.config.partial_error_tail_delay_ms > 0:
+                        self.inject(self.receive_urc(0, b"ERROR")[:-2])
+                        self.sleep(self.config.partial_error_tail_delay_ms / 1000.0)
+                    if self.config.partial_send_ok_urc_delay_ms > 0:
+                        self.inject(self.receive_urc(0, b"SEND OK")[:-2])
+                        self.sleep(self.config.partial_send_ok_urc_delay_ms / 1000.0)
+                    if self.config.partial_send_ok_tail_delay_ms > 0:
+                        self.inject(self.receive_urc(0, b"SEND OK")[:-2])
+                        self.sleep(self.config.partial_send_ok_tail_delay_ms / 1000.0)
                     if self.config.send_result == "ok":
                         self._respond(self.raw_success)
                     elif self.config.send_result == "error":
@@ -165,9 +201,49 @@ class ATServerSimulator:
         }:
             self._respond(b"\r\nOK\r\n")
         elif upper == "AT+CSQ":
-            self._respond(b"\r\n+CSQ: 18,0\r\n\r\nOK\r\n")
+            if self.config.interleave_urc_on_csq:
+                self._respond(b"\r\n+CSQ: 18,0\r\n")
+                self.inject(self.receive_urc(0, b"HELLO"))
+                self._respond(b"\r\nOK\r\n")
+            else:
+                self._respond(b"\r\n+CSQ: 18,0\r\n\r\nOK\r\n")
         elif upper == "AT+CEREG?":
             self._respond(b"\r\n+CEREG: 0,1\r\n\r\nOK\r\n")
+        elif upper == "AT+SIMLATEA" and self.config.late_response_isolation:
+            attempt = sum(cmd.upper() == "AT+SIMLATEA" for cmd in self.commands)
+            if attempt == 1:
+                self.sleep(self.config.late_first_delay_ms / 1000.0)
+                self._respond(b"\r\n+SIMLATEA: FIRST\r\n\r\nOK\r\n")
+            else:
+                self.sleep(self.config.late_retry_delay_ms / 1000.0)
+                self._respond(b"\r\n+SIMLATEA: SECOND\r\n\r\nOK\r\n")
+        elif upper == "AT+SIMLATEB" and self.config.late_response_isolation:
+            self._respond(b"\r\n+SIMLATEB: CURRENT\r\n\r\nOK\r\n")
+        elif match := re.fullmatch(r"AT\+SIMBUF=(255|256|257)", upper):
+            length = int(match.group(1))
+            prefix = f"+SIMBUF: {length} ".encode("ascii")
+            suffix = b"\r\nOK\r\n"
+            self._respond(prefix + b"X" * (length - len(prefix) - len(suffix)) + suffix)
+        elif upper == "AT+SIMBUF=RECOVER":
+            self._respond(b"\r\n+RECOVER: READY\r\n\r\nOK\r\n")
+        elif upper == "AT+SIMERR=ERROR":
+            self._respond(b"\r\nERROR\r\n")
+        elif upper == "AT+SIMERR=TIMEOUT":
+            self.log("TX: <intentional timeout>")
+        elif upper == "AT+SIMWRAP=TIMEOUT":
+            self.log("TX: <intentional wrap timeout>")
+        elif upper == "AT+SIMWRAP=URC":
+            self._respond(b"\r\nOK\r\n")
+            self.inject(self.receive_urc(0, b"HELLO")[:-4])
+            self.sleep(self.config.urc_recovery_delay_ms / 1000.0)
+            self.inject(self.receive_urc(0, b"RECOVER"))
+        elif upper == "AT+SIMURC=PREFIX":
+            self._respond(b"\r\nOK\r\n")
+            self.inject(b"\r\n+SIM: LONG FIRST\r\n")
+            self.inject(b"\r\n+SIM: SHORT\r\n")
+            self.inject(b"\r\n+SIM: LONG EMBED +SIM: SHORT\r\n")
+            self.inject(b"\r\n+SIMX: MALFORMED\r\n")
+            self.inject(b"\r\n+SIM: LONG RECOVER\r\n")
         elif upper == "AT+CREG?":
             self._respond(b"\r\n+CREG: 0,1\r\n\r\nOK\r\n")
         elif upper == "AT+CIMI":
@@ -196,6 +272,53 @@ class ATServerSimulator:
             elif self.config.urc_fault == "payload":
                 urc = urc[:-4]
             self.inject(urc)
+        elif upper == "AT+SIMURC=BURST":
+            self._respond(b"\r\nOK\r\n")
+            for sequence in range(self.config.urc_burst_count):
+                payload = f"B{sequence:03d}".encode("ascii")
+                self.inject(self.receive_urc(0, payload))
+        elif upper == "AT+SIMURC=RECOVER":
+            self._respond(b"\r\nOK\r\n")
+            self.inject(self.receive_urc(0, b"HELLO")[:-4])
+            self.sleep(self.config.urc_recovery_delay_ms / 1000.0)
+            self.inject(self.receive_urc(0, b"HELLO"))
+        elif upper == "AT+SIMURC=OVERFLOW":
+            self._respond(b"\r\nOK\r\n")
+            payload = b"X" * self.config.urc_overflow_payload_size
+            self.inject(self.receive_urc(0, payload))
+            self.inject(self.receive_urc(0, b"HELLO"))
+        elif upper == "AT+SIMURC=BOUNDARY":
+            self._respond(b"\r\nOK\r\n")
+            self.sleep(0.1)
+            self.inject(self.receive_urc(0, b"M" * 232))
+            self.inject(self.receive_urc(0, b"X" * 233))
+            self.inject(b'\r\n+QIURC: "recv",0,0\n\r\n')
+            self.inject(b'\r\n+QIURC: "recv",0,-1\n\r\n')
+            self.inject(b'\r\n+QIURC: "recv",0,2147483647\n')
+            self.inject(b'\r\n+QIURC: "recv",0,5\nABC')
+            self.sleep(self.config.urc_recovery_delay_ms / 1000.0)
+            self.inject(b'\r\n+QIURC: "recv",0,3\nTOOL\r\n')
+            self.inject(self.receive_urc(0, b"RECOVER"))
+        elif upper == "AT+SIMURC=INTERLEAVE":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=PROMPT":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=SENDRESULT":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=FAKEPROMPT":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=FAKESENDOK":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=FAKEERROR":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=PARTIALERROR":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=PARTIALTAIL":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=PARTIALSENDOK":
+            self._respond(b"\r\nOK\r\n")
+        elif upper == "AT+SIMURC=PARTIALSENDTAIL":
+            self._respond(b"\r\nOK\r\n")
         elif upper == "AT+SIMURC=CLOSED":
             self._respond(b"\r\nOK\r\n")
             self.inject(b'\r\n+QIURC: "closed",0\r\n')
@@ -209,6 +332,11 @@ class ATServerSimulator:
         self.raw_remaining = length
         self.raw_success = success
         self.raw_buffer.clear()
+        if self.config.interleave_urc_before_prompt:
+            self.inject(self.receive_urc(0, b"HELLO"))
+        if self.config.fake_prompt_urc_delay_ms > 0:
+            self.inject(self.receive_urc(0, b">"))
+            self.sleep(self.config.fake_prompt_urc_delay_ms / 1000.0)
         self._respond(b">")
         if length == 0:
             self.payloads.append(b"")
@@ -281,6 +409,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--urc", action="append", default=[], help=r"periodic URC text; supports \r and \n")
     parser.add_argument("--urc-interval", type=float, default=0.0, help="seconds between periodic URCs")
+    parser.add_argument("--urc-burst-count", type=int, default=32, help="frames sent for AT+SIMURC=BURST")
+    parser.add_argument("--urc-recovery-delay-ms", type=int, default=700, help="delay after truncated AT+SIMURC=RECOVER frame")
+    parser.add_argument("--urc-overflow-payload-size", type=int, default=300, help="oversized payload bytes for AT+SIMURC=OVERFLOW")
+    parser.add_argument("--interleave-urc-on-csq", action="store_true", help="inject a receive URC before AT+CSQ final OK")
+    parser.add_argument("--interleave-urc-before-prompt", action="store_true", help="inject a receive URC before QISEND/CIPSEND prompt")
+    parser.add_argument("--interleave-urc-before-send-result", action="store_true", help="inject a receive URC after payload and before send result")
+    parser.add_argument("--fake-prompt-urc-delay-ms", type=int, default=0, help="inject URC payload > and delay the real prompt")
+    parser.add_argument("--fake-send-ok-urc-delay-ms", type=int, default=0, help="inject URC payload SEND OK and delay the real result")
+    parser.add_argument("--fake-error-urc-delay-ms", type=int, default=0, help="inject URC payload ERROR and delay the real result")
+    parser.add_argument("--partial-error-urc-delay-ms", type=int, default=0, help="inject URC payload ERROR without trailing CRLF and delay the real result")
+    parser.add_argument("--partial-error-tail-delay-ms", type=int, default=0, help="inject URC payload ERROR without trailing CRLF so the real result supplies the tail")
+    parser.add_argument("--partial-send-ok-urc-delay-ms", type=int, default=0, help="inject URC payload SEND OK without trailing CRLF and delay the real result")
+    parser.add_argument("--partial-send-ok-tail-delay-ms", type=int, default=0, help="inject URC payload SEND OK without trailing CRLF so the real result supplies the tail")
+    parser.add_argument("--late-response-isolation", action="store_true", help="delay two AT+SIMLATEA attempts across AT+SIMLATEB")
+    parser.add_argument("--late-first-delay-ms", type=int, default=700, help="delay first AT+SIMLATEA response")
+    parser.add_argument("--late-retry-delay-ms", type=int, default=300, help="delay retry AT+SIMLATEA response")
+    parser.add_argument("--expect-late-a-attempts", type=int, help="require this exact AT+SIMLATEA command count")
+    parser.add_argument("--expect-wrap-attempts", type=int, help="require this exact AT+SIMWRAP=TIMEOUT command count")
     parser.add_argument("--duration", type=float, default=0.0, help="stop after N seconds; 0 runs until Ctrl-C")
     parser.add_argument("--expect-command", action="append", default=[], metavar="REGEX", help="required received command")
     parser.add_argument("--expect-payload-size", type=int, help="require one payload with this exact size")
@@ -322,6 +468,22 @@ def run(args: argparse.Namespace) -> int:
             drop_prompt=args.drop_prompt,
             send_result=args.send_result,
             urc_fault=args.urc_fault,
+            urc_burst_count=max(args.urc_burst_count, 0),
+            urc_recovery_delay_ms=max(args.urc_recovery_delay_ms, 0),
+            urc_overflow_payload_size=max(args.urc_overflow_payload_size, 0),
+            interleave_urc_on_csq=args.interleave_urc_on_csq,
+            interleave_urc_before_prompt=args.interleave_urc_before_prompt,
+            interleave_urc_before_send_result=args.interleave_urc_before_send_result,
+            fake_prompt_urc_delay_ms=max(args.fake_prompt_urc_delay_ms, 0),
+            fake_send_ok_urc_delay_ms=max(args.fake_send_ok_urc_delay_ms, 0),
+            fake_error_urc_delay_ms=max(args.fake_error_urc_delay_ms, 0),
+            partial_error_urc_delay_ms=max(args.partial_error_urc_delay_ms, 0),
+            partial_error_tail_delay_ms=max(args.partial_error_tail_delay_ms, 0),
+            partial_send_ok_urc_delay_ms=max(args.partial_send_ok_urc_delay_ms, 0),
+            partial_send_ok_tail_delay_ms=max(args.partial_send_ok_tail_delay_ms, 0),
+            late_response_isolation=args.late_response_isolation,
+            late_first_delay_ms=max(args.late_first_delay_ms, 0),
+            late_retry_delay_ms=max(args.late_retry_delay_ms, 0),
         )
         expected = compile_patterns(args.expect_command)
         urcs = [decode_escaped(value) for value in args.urc]
@@ -353,6 +515,22 @@ def run(args: argparse.Namespace) -> int:
     if missing:
         print(f"Missing expected commands: {', '.join(missing)}", file=sys.stderr)
         return 1
+    if args.expect_late_a_attempts is not None:
+        actual_attempts = sum(cmd.upper() == "AT+SIMLATEA" for cmd in simulator.commands)
+        if actual_attempts != args.expect_late_a_attempts:
+            print(
+                f"Expected {args.expect_late_a_attempts} AT+SIMLATEA attempts; actual: {actual_attempts}",
+                file=sys.stderr,
+            )
+            return 1
+    if args.expect_wrap_attempts is not None:
+        actual_attempts = sum(cmd.upper() == "AT+SIMWRAP=TIMEOUT" for cmd in simulator.commands)
+        if actual_attempts != args.expect_wrap_attempts:
+            print(
+                f"Expected {args.expect_wrap_attempts} AT+SIMWRAP=TIMEOUT attempts; actual: {actual_attempts}",
+                file=sys.stderr,
+            )
+            return 1
     expected_hash = args.expect_payload_sha256.lower() if args.expect_payload_sha256 else None
     try:
         expected_suffix = bytes.fromhex(args.expect_payload_suffix_hex) if args.expect_payload_suffix_hex else None

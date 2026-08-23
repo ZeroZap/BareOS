@@ -165,6 +165,8 @@ typedef struct {
     unsigned          disposing : 1;    
     unsigned          err_occur : 1;    
     unsigned          raw_trans : 1;
+    unsigned          recv_overflow : 1;
+    unsigned          recv_discard : 1;
 } at_info_t;
 
 /**
@@ -336,8 +338,11 @@ static char *get_recvbuf(at_env_t *env)
 
 static void recvbuf_clear(at_env_t *env)
 {
-    obj_map(env->obj)->recvbuf[0] = '\0';
-    obj_map(env->obj)->recv_cnt = 0;
+    at_info_t *ai = obj_map(env->obj);
+    ai->recvbuf[0] = '\0';
+    ai->recv_cnt = 0;
+    ai->recv_overflow = 0;
+    ai->recv_discard = 0;
 }
 
 static char *find_substr(at_env_t *env, const char *str)
@@ -377,7 +382,10 @@ static void at_reset_timer(at_env_t *env)
  */
 static void at_next_wait(struct at_env *env, unsigned int ms)
 {
-    obj_map(env->obj)->next_delay = ms;
+    at_info_t *ai = obj_map(env->obj);
+
+    ai->delay_timer = at_get_ms();
+    ai->next_delay = ms;
     AT_DEBUG(obj_map(env->obj), "Next wait:%d\r\n", ms);
 }
 
@@ -410,6 +418,13 @@ static void do_at_callback(at_info_t *ai, work_item_t *wi, at_resp_code code)
 {
     at_response_t r;
     AT_DEBUG(ai, "<-\r\n%s", ai->recvbuf);
+    r.obj     = &ai->obj;
+    r.params  = wi->attr.params;
+    r.recvbuf = ai->recvbuf;
+    r.recvcnt = ai->recv_cnt;
+    r.code    = code;
+    r.prefix  = ai->prefix != NULL ? ai->prefix : ai->recvbuf;
+    r.suffix  = ai->suffix != NULL ? ai->suffix : ai->recvbuf;
     //Exception notification
     if ((code == AT_RESP_ERROR || code == AT_RESP_TIMEOUT) && __get_adapter(ai)->error != NULL) {
         __get_adapter(ai)->error(&r);
@@ -430,13 +445,6 @@ static void do_at_callback(at_info_t *ai, work_item_t *wi, at_resp_code code)
     update_work_state(wi, AT_WORK_STAT_FINISH, code);
     //Submit response data and status.
     if (wi->attr.cb) {
-        r.obj     = &ai->obj;
-        r.params  = wi->attr.params;
-        r.recvbuf = ai->recvbuf;
-        r.recvcnt = ai->recv_cnt;
-        r.code    = code;        
-        r.prefix  = ai->prefix != NULL ? ai->prefix : ai->recvbuf;
-        r.suffix  = ai->suffix != NULL ? ai->suffix : ai->recvbuf;
         wi->attr.cb(&r);
     }
 }
@@ -479,6 +487,7 @@ static void work_item_destroy_all(at_info_t *ai, struct list_head *head)
     at_lock(ai);
     list_for_each_safe(pos, n, head) {
         it = list_entry(pos, work_item_t, node);
+        update_work_state(it, AT_WORK_STAT_ABORT, AT_RESP_ABORT);
         list_del(&it->node);
         work_item_destroy(it);
     }
@@ -625,6 +634,10 @@ static int do_cmd_handler(at_info_t *ai)
         match_info_init(ai, attr);        
         break;
     case AT_STAT_RECV: /*Receive information and matching processing.*/
+        if (ai->recv_overflow) {
+            do_at_callback(ai, wi, AT_RESP_ERROR);
+            return true;
+        }
         if (ai->match_len != ai->recv_cnt) {
             ai->match_len = ai->recv_cnt;
             //Matching response content prefix.
@@ -796,12 +809,53 @@ void at_obj_urc_set_enable(at_obj_t *at, int enable, unsigned short timeout)
 const urc_item_t *find_urc_item(at_info_t *ai, char *urc_buf, unsigned int size)
 {
     const urc_item_t *tbl = ai->urc_tbl;
+    const urc_item_t *best = NULL;
+    unsigned int best_len = 0u;
+    unsigned int start = 0u;
     int i;
-    for (i = 0; i < ai->urc_tbl_size && tbl; i++, tbl++) {
-       if (strstr(urc_buf, tbl->prefix))//It will need to be further optimized in the future.
-            return tbl;  
+
+    while (start < size && (urc_buf[start] == '\r' || urc_buf[start] == '\n')) {
+        start++;
     }
-    return NULL;
+    for (i = 0; i < ai->urc_tbl_size && tbl; i++, tbl++) {
+        unsigned int prefix_len;
+        bool defer = false;
+        int j;
+
+        if (tbl->prefix == NULL) {
+            continue;
+        }
+        prefix_len = (unsigned int)strlen(tbl->prefix);
+        if (prefix_len > size - start ||
+            memcmp(urc_buf + start, tbl->prefix, prefix_len) != 0) {
+            continue;
+        }
+        if (size - start == prefix_len) {
+            const urc_item_t *other = ai->urc_tbl;
+
+            for (j = 0; j < ai->urc_tbl_size && other; j++, other++) {
+                unsigned int other_len;
+
+                if (other->prefix == NULL) {
+                    continue;
+                }
+                other_len = (unsigned int)strlen(other->prefix);
+                if (other_len > prefix_len &&
+                    memcmp(other->prefix, tbl->prefix, prefix_len) == 0) {
+                    defer = true;
+                    break;
+                }
+            }
+        }
+        if (defer) {
+            continue;
+        }
+        if (prefix_len > best_len) {
+            best = tbl;
+            best_len = prefix_len;
+        }
+    }
+    return best;
 }
 
 static void urc_reset(at_info_t *ai)
@@ -811,6 +865,30 @@ static void urc_reset(at_info_t *ai)
     ai->urc_item   = NULL;
     ai->urc_match  = 0;
 	ai->urc_timer = at_get_ms();
+}
+
+static void resp_remove_urc(at_info_t *ai, const char *urc, unsigned int size)
+{
+    unsigned int offset;
+
+    if (ai->cursor == NULL || size == 0u || size > ai->recv_cnt) {
+        return;
+    }
+    offset = ai->recv_cnt - size;
+    for (;;) {
+        if (memcmp(ai->recvbuf + offset, urc, size) == 0) {
+            memmove(ai->recvbuf + offset,
+                    ai->recvbuf + offset + size,
+                    ai->recv_cnt - offset - size);
+            ai->recv_cnt -= (unsigned short)size;
+            ai->recvbuf[ai->recv_cnt] = '\0';
+            return;
+        }
+        if (offset == 0u) {
+            return;
+        }
+        offset--;
+    }
 }
 
 /**
@@ -829,8 +907,14 @@ static void urc_handler_entry(at_info_t *ai, urc_recv_status status, char *urc, 
         AT_DEBUG(ai, "<=\r\n%s\r\n", urc);    
     /* Send URC event notification. */
     remain = ai->urc_item ? ai->urc_item->handler(&ctx) : 0;
+    if (remain < 0 || (unsigned int)remain >= ai->urc_bufsize - ai->urc_cnt) {
+        AT_DEBUG(ai, "Invalid URC remaining length:%d.\r\n", remain);
+        resp_remove_urc(ai, urc, size);
+        urc_reset(ai);
+        return;
+    }
     if (remain == 0 && (ai->urc_item || ai->cursor == NULL)) {
-
+        resp_remove_urc(ai, urc, size);
         urc_reset(ai);
     } else {
         AT_DEBUG(ai,"URC receives %d bytes remaining.\r\n", remain);
@@ -913,16 +997,39 @@ static void urc_recv_process(at_info_t *ai, char *buf, unsigned int size)
  */
 static void resp_recv_process(at_info_t *ai, const char *buf, unsigned int size)
 {
-    if (size == 0)
-        return;
-    /* Clamp size to leave room for trailing NUL */
-    if (size >= ai->recv_bufsize)
-        size = ai->recv_bufsize - 1;
-    if (ai->recv_cnt + size >= ai->recv_bufsize) //Receive overflow, clear directly.
-        ai->recv_cnt = 0;
+    unsigned int available;
+    unsigned int i;
 
-    memcpy(ai->recvbuf + ai->recv_cnt, buf, size);
-    ai->recv_cnt += size;
+    if (size == 0 || ai->cursor == NULL)
+        return;
+    if (ai->recv_discard) {
+        for (i = 0u; i < size; i++) {
+            if (buf[i] == '\n') {
+                ai->recv_discard = 0;
+                break;
+            }
+        }
+        return;
+    }
+    if (ai->recv_overflow)
+        return;
+
+    available = ai->recv_bufsize - 1u - ai->recv_cnt;
+    if (size > available) {
+        for (i = available; i < size; i++) {
+            if (buf[i] == '\n') {
+                break;
+            }
+        }
+        ai->recv_discard = i == size;
+        size = available;
+        ai->recv_overflow = 1;
+    }
+
+    if (size > 0u) {
+        memcpy(ai->recvbuf + ai->recv_cnt, buf, size);
+        ai->recv_cnt += (unsigned short)size;
+    }
     ai->recvbuf[ai->recv_cnt] = '\0';
 }
 
@@ -1049,11 +1156,13 @@ at_obj_t *at_obj_create(const at_adapter_t *adap)
  */
 void at_obj_destroy(at_obj_t *obj)
 {
-    at_info_t *ai = obj_map(obj);
+    at_info_t *ai;
 
     if (obj == NULL)
         return;
+    ai = obj_map(obj);
 
+    tx_clear(ai);
     work_item_destroy_all(ai, &ai->hlist);
     work_item_destroy_all(ai, &ai->llist);
 
@@ -1084,6 +1193,7 @@ bool at_obj_busy(at_obj_t *at)
            !list_empty(&ai->hlist) ||
            !list_empty(&ai->llist) ||
            tx_pending(ai) ||
+           ai->recv_discard ||
            ai->urc_cnt != 0 ||
 #if AT_RAW_TRANSPARENT_EN
            ai->raw_trans ||
@@ -1277,17 +1387,36 @@ bool at_do_work(at_obj_t *at, void *params, at_work_t work)
  */
 void at_work_abort_all(at_obj_t *at)
 {
-    struct list_head *pos;
+    struct list_head *pos, *next;
     work_item_t *it;
-    at_info_t *ai = obj_map(at);    
-    at_lock(ai);
-    list_for_each(pos, &ai->hlist) {
-        it = list_entry(pos, work_item_t, node);
-        update_work_state(it, AT_WORK_STAT_ABORT, AT_RESP_ABORT);
+    at_info_t *ai;
+
+    if (at == NULL) {
+        return;
     }
-    list_for_each(pos, &ai->llist) {
+    ai = obj_map(at);
+    at_lock(ai);
+    list_for_each_safe(pos, next, &ai->hlist) {
         it = list_entry(pos, work_item_t, node);
         update_work_state(it, AT_WORK_STAT_ABORT, AT_RESP_ABORT);
+        if (it != ai->cursor) {
+            list_del(&it->node);
+            if (ai->list_cnt != 0u) {
+                ai->list_cnt--;
+            }
+            work_item_destroy(it);
+        }
+    }
+    list_for_each_safe(pos, next, &ai->llist) {
+        it = list_entry(pos, work_item_t, node);
+        update_work_state(it, AT_WORK_STAT_ABORT, AT_RESP_ABORT);
+        if (it != ai->cursor) {
+            list_del(&it->node);
+            if (ai->list_cnt != 0u) {
+                ai->list_cnt--;
+            }
+            work_item_destroy(it);
+        }
     }
     at_unlock(ai);
 }
@@ -1616,10 +1745,16 @@ void at_obj_process(at_obj_t *at)
     }
 #endif
     read_size = __get_adapter(ai)->read(rbuf, sizeof(rbuf));
-#if AT_URC_WARCH_EN
-        urc_recv_process(ai, rbuf, read_size);
-#endif
     resp_recv_process(ai, rbuf, read_size);
+#if AT_URC_WARCH_EN
+    urc_recv_process(ai, rbuf, read_size);
+    if (ai->urc_item != NULL && ai->urc_cnt != 0u) {
+        return;
+    }
+#endif
+    if (ai->recv_discard) {
+        return;
+    }
     at_work_process(ai);
 }
 
@@ -1692,26 +1827,32 @@ int at_urc_recv_split(at_urc_info_t *info,
     int bytes   = 0;
     int hdr_len = 0;
 
-    if (info == NULL || parse == NULL || info->urcbuf == NULL)
+    if (info == NULL || parse == NULL || info->urcbuf == NULL ||
+        info->status != URC_RECV_OK || trail_bytes < 0)
         return -1;
 
     if (parse(info->urcbuf, info->urclen, &id, &bytes, &hdr_len) != 0)
         return -1;
-    if (bytes <= 0 || hdr_len <= 0)
+    if (bytes <= 0 || hdr_len <= 0 || bytes > 0x7fffffff - trail_bytes)
         return -1;
 
     /* First call: header only; ask the framework for `bytes` more bytes
      * plus any trailing framing the modem adds (CRLF, etc.). */
-    if (info->urclen <= hdr_len)
+    if (info->urclen <= hdr_len) {
         return bytes + trail_bytes;
+    }
 
     /* Second call: payload sits at [hdr_len .. hdr_len+bytes). */
     int avail = info->urclen - hdr_len;
-    if (avail > bytes) avail = bytes;
-    if (avail <= 0) return -1;
+    if (avail != bytes + trail_bytes)
+        return -1;
+    if (trail_bytes == 2 &&
+        (info->urcbuf[hdr_len + bytes] != '\r' ||
+         info->urcbuf[hdr_len + bytes + 1] != '\n'))
+        return -1;
 
     if (out_id)          *out_id          = id;
     if (out_payload)     *out_payload     = info->urcbuf + hdr_len;
-    if (out_payload_len) *out_payload_len = avail;
+    if (out_payload_len) *out_payload_len = bytes;
     return 0;
 }

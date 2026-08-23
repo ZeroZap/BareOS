@@ -1,8 +1,8 @@
 /**
  * @file mb_tiny.h
- * @brief Nano Modbus Tiny - RTU Only, Minimal Footprint
- * @version 1.0.0
- * @date 2026-03-31
+ * @brief Nano Modbus Tiny - RTU ADU codec with synchronous master wrappers
+ * @version 1.1.0
+ * @date 2026-08-23
  */
 
 #ifndef MB_TINY_H
@@ -12,252 +12,195 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include "xy_typedef.h"
+#include <stdint.h>
 
-/* ==================== 配置 ==================== */
+/* ==================== Configuration ==================== */
 
-#define MB_TINY_MAX_ADU_SIZE     128     /**< 最大 ADU 大小 */
-#define MB_TINY_TIMEOUT_MS       1000    /**< 默认超时 (ms) */
+#ifndef MB_TINY_MAX_ADU_SIZE
+#define MB_TINY_MAX_ADU_SIZE 128U
+#endif
 
-/* ==================== 错误码 ==================== */
+#ifndef MB_TINY_TIMEOUT_MS
+#define MB_TINY_TIMEOUT_MS 1000U
+#endif
 
-#define MB_TINY_OK               0
-#define MB_TINY_ERROR            (-1)
-#define MB_TINY_INVALID_PARAM   (-2)
-#define MB_TINY_TIMEOUT         (-3)
-#define MB_TINY_CRC_ERROR       (-4)
+#define MB_TINY_MIN_ADU_SIZE 4U
+#define MB_TINY_MAX_READ_REGS ((MB_TINY_MAX_ADU_SIZE - 5U) / 2U)
+#define MB_TINY_MAX_READ_BITS ((MB_TINY_MAX_ADU_SIZE - 5U) * 8U)
+#define MB_TINY_MAX_WRITE_REGS ((MB_TINY_MAX_ADU_SIZE - 9U) / 2U)
+#define MB_TINY_MAX_WRITE_BITS ((MB_TINY_MAX_ADU_SIZE - 9U) * 8U)
 
-/* ==================== 功能码 ==================== */
+/* ==================== Local status codes ==================== */
 
-#define MB_FUNC_READ_COILS          0x01
-#define MB_FUNC_READ_DISCRETE       0x02
-#define MB_FUNC_READ_HOLDING        0x03
-#define MB_FUNC_READ_INPUT          0x04
-#define MB_FUNC_WRITE_SINGLE_COIL   0x05
-#define MB_FUNC_WRITE_SINGLE_REG    0x06
-#define MB_FUNC_WRITE_MULTIPLE_COILS 0x0F
-#define MB_FUNC_WRITE_MULTIPLE_REGS  0x10
+#define MB_TINY_OK 0
+#define MB_TINY_ERROR (-1)
+#define MB_TINY_INVALID_PARAM (-2)
+#define MB_TINY_TIMEOUT (-3)
+#define MB_TINY_CRC_ERROR (-4)
+#define MB_TINY_FRAME_ERROR (-5)
+#define MB_TINY_IO_ERROR (-6)
+#define MB_TINY_EXCEPTION (-7)
+#define MB_TINY_NOT_INITIALIZED (-8)
+#define MB_TINY_BUFFER_TOO_SMALL (-9)
 
-/* ==================== 错误码 (从站) ==================== */
+#define MB_TINY_IGNORED 1
+#define MB_TINY_NO_RESPONSE 2
 
-#define MB_ERR_ILLEGAL_FUNC       0x01
-#define MB_ERR_ILLEGAL_DATA_ADDR  0x02
-#define MB_ERR_ILLEGAL_DATA_VALUE 0x03
+/* ==================== Function codes ==================== */
 
-/* ==================== 从站设备 ==================== */
+#define MB_FUNC_READ_COILS 0x01U
+#define MB_FUNC_READ_DISCRETE 0x02U
+#define MB_FUNC_READ_HOLDING 0x03U
+#define MB_FUNC_READ_INPUT 0x04U
+#define MB_FUNC_WRITE_SINGLE_COIL 0x05U
+#define MB_FUNC_WRITE_SINGLE_REG 0x06U
+#define MB_FUNC_WRITE_MULTIPLE_COILS 0x0FU
+#define MB_FUNC_WRITE_MULTIPLE_REGS 0x10U
 
-/**
- * @brief 保持寄存器 (用户定义)
- */
-typedef struct {
-    uint16_t *data;         /**< 寄存器数据 */
-    uint16_t start_addr;    /**< 起始地址 */
-    uint16_t count;         /**< 寄存器数量 */
-} mb_tiny_holding_t;
+/* ==================== Modbus exception codes ==================== */
 
-/**
- * @brief 线圈 (用户定义)
- */
-typedef struct {
-    uint8_t *data;          /**< 线圈数据 */
-    uint16_t start_addr;    /**< 起始地址 */
-    uint16_t count;         /**< 线圈数量 */
-} mb_tiny_coils_t;
+#define MB_ERR_ILLEGAL_FUNC 0x01U
+#define MB_ERR_ILLEGAL_DATA_ADDR 0x02U
+#define MB_ERR_ILLEGAL_DATA_VALUE 0x03U
+#define MB_ERR_DEVICE_FAILURE 0x04U
+#define MB_ERR_DEVICE_BUSY 0x06U
 
-/**
- * @brief Modbus Tiny 从站
- */
-typedef struct {
-    uint8_t slave_id;                   /**< 从站 ID (1-247) */
-    mb_tiny_holding_t holding;         /**< 保持寄存器 */
-    mb_tiny_coils_t coils;              /**< 线圈 */
-    
-    uint8_t rx_buf[MB_TINY_MAX_ADU_SIZE];
-    uint16_t rx_len;
-    
-    uint32_t request_count;
-    uint32_t error_count;
-    bool initialized;
-} mb_tiny_slave_t;
+/* ==================== Serial callbacks ==================== */
 
 /**
- * @brief Modbus Tiny 主站
- */
-typedef struct {
-    uint8_t slave_id;                   /**< 当前从站 ID */
-    uint32_t timeout_ms;                 /**< 超时时间 */
-    
-    uint8_t tx_buf[MB_TINY_MAX_ADU_SIZE];
-    uint8_t rx_buf[MB_TINY_MAX_ADU_SIZE];
-    uint16_t tx_len;
-    uint16_t rx_len;
-    
-    uint32_t request_count;
-    uint32_t error_count;
-    bool initialized;
-} mb_tiny_master_t;
-
-/* ==================== 串口接口 ==================== */
-
-/**
- * @brief 串口发送回调 (用户实现)
- * @param data 数据指针
- * @param len 数据长度
- * @return 实际发送字节数或错误码
+ * The callback must consume or copy all data before returning. A positive
+ * return value is the number of bytes sent; short writes are treated as IO
+ * errors by the synchronous API.
  */
 typedef int (*mb_tiny_send_cb_t)(const uint8_t *data, uint16_t len);
 
 /**
- * @brief 串口接收回调 (用户实现)
- * @param data 数据缓冲区
- * @param len 最大接收长度
- * @param timeout_ms 超时时间
- * @return 实际接收字节数或错误码
+ * Receive one complete RTU ADU into data. len is the buffer capacity.
+ * Return the received length, zero on timeout, or a negative driver error.
  */
-typedef int (*mb_tiny_recv_cb_t)(uint8_t *data, uint16_t len, uint32_t timeout_ms);
+typedef int (*mb_tiny_recv_cb_t)(uint8_t *data, uint16_t len,
+                                 uint32_t timeout_ms);
 
-/* ==================== 从站 API ==================== */
+/* ==================== Data maps ==================== */
+
+typedef struct {
+  uint16_t *data;
+  uint16_t start_addr;
+  uint16_t count;
+} mb_tiny_holding_t;
+
+typedef mb_tiny_holding_t mb_tiny_input_t;
 
 /**
- * @brief 初始化 Modbus Tiny 从站
- * @param slave 从站句柄
- * @param slave_id 从站 ID
- * @return MB_TINY_OK 成功
+ * Bit-packed coil map. data[0] bit 0 represents start_addr, bit 1 represents
+ * start_addr + 1, and so on.
  */
+typedef struct {
+  uint8_t *data;
+  uint16_t start_addr;
+  uint16_t count;
+} mb_tiny_coils_t;
+
+typedef mb_tiny_coils_t mb_tiny_discrete_t;
+
+/* ==================== Instances ==================== */
+
+typedef struct {
+  uint8_t slave_id;
+  mb_tiny_holding_t holding;
+  mb_tiny_input_t input;
+  mb_tiny_coils_t coils;
+  mb_tiny_discrete_t discrete;
+
+  /* Retained for source compatibility and future RTU stream transport. */
+  uint8_t rx_buf[MB_TINY_MAX_ADU_SIZE];
+  uint16_t rx_len;
+
+  mb_tiny_send_cb_t send_cb;
+  uint32_t request_count;
+  uint32_t error_count;
+  bool initialized;
+} mb_tiny_slave_t;
+
+typedef struct {
+  uint8_t slave_id;
+  uint32_t timeout_ms;
+
+  /* Retained for source compatibility and future non-blocking transport. */
+  uint8_t tx_buf[MB_TINY_MAX_ADU_SIZE];
+  uint8_t rx_buf[MB_TINY_MAX_ADU_SIZE];
+  uint16_t tx_len;
+  uint16_t rx_len;
+
+  mb_tiny_send_cb_t send_cb;
+  mb_tiny_recv_cb_t recv_cb;
+  uint8_t last_exception;
+  uint32_t request_count;
+  uint32_t error_count;
+  bool initialized;
+} mb_tiny_master_t;
+
+/* ==================== Slave API ==================== */
+
 int mb_tiny_slave_init(mb_tiny_slave_t *slave, uint8_t slave_id);
-
-/**
- * @brief 配置保持寄存器
- * @param slave 从站句柄
- * @param data 寄存器数据缓冲区
- * @param start_addr 起始地址
- * @param count 寄存器数量
- * @return MB_TINY_OK 成功
- */
 int mb_tiny_slave_config_holding(mb_tiny_slave_t *slave, uint16_t *data,
-                                  uint16_t start_addr, uint16_t count);
-
-/**
- * @brief 配置线圈
- * @param slave 从站句柄
- * @param data 线圈数据缓冲区
- * @param start_addr 起始地址
- * @param count 线圈数量
- * @return MB_TINY_OK 成功
- */
+                                 uint16_t start_addr, uint16_t count);
 int mb_tiny_slave_config_coils(mb_tiny_slave_t *slave, uint8_t *data,
-                                uint16_t start_addr, uint16_t count);
-
-/**
- * @brief 设置发送回调
- * @param slave 从站句柄
- * @param send_cb 发送回调
- * @return MB_TINY_OK 成功
- */
+                               uint16_t start_addr, uint16_t count);
+int mb_tiny_slave_config_input(mb_tiny_slave_t *slave, uint16_t *data,
+                               uint16_t start_addr, uint16_t count);
+int mb_tiny_slave_config_discrete(mb_tiny_slave_t *slave, uint8_t *data,
+                                  uint16_t start_addr, uint16_t count);
 void mb_tiny_slave_set_send(mb_tiny_slave_t *slave, mb_tiny_send_cb_t send_cb);
 
 /**
- * @brief 处理接收数据 (在串口中断或轮询中调用)
- * @param slave 从站句柄
- * @param data 接收数据
- * @param len 数据长度
- * @return MB_TINY_OK 成功
+ * Process one complete RTU request ADU without performing any IO.
+ *
+ * response must not overlap request. On MB_TINY_OK or MB_TINY_EXCEPTION,
+ * response_len contains the generated ADU length. MB_TINY_IGNORED and
+ * MB_TINY_NO_RESPONSE return a zero response length.
  */
-int mb_tiny_slave_handle(mb_tiny_slave_t *slave, const uint8_t *data, uint16_t len);
-
-/* ==================== 主站 API ==================== */
+int mb_tiny_slave_process(mb_tiny_slave_t *slave, const uint8_t *request,
+                          uint16_t request_len, uint8_t *response,
+                          uint16_t response_capacity, uint16_t *response_len);
 
 /**
- * @brief 初始化 Modbus Tiny 主站
- * @param master 主站句柄
- * @return MB_TINY_OK 成功
+ * Compatibility wrapper around mb_tiny_slave_process(). Generated responses
+ * are sent through the instance send callback.
  */
+int mb_tiny_slave_handle(mb_tiny_slave_t *slave, const uint8_t *data,
+                         uint16_t len);
+
+/* ==================== Master API ==================== */
+
 int mb_tiny_master_init(mb_tiny_master_t *master);
-
-/**
- * @brief 设置串口接口
- * @param master 主站句柄
- * @param send_cb 发送回调
- * @param recv_cb 接收回调
- */
-void mb_tiny_master_set_uart(mb_tiny_master_t *master, 
-                              mb_tiny_send_cb_t send_cb, 
-                              mb_tiny_recv_cb_t recv_cb);
-
-/**
- * @brief 设置超时时间
- * @param master 主站句柄
- * @param timeout_ms 超时时间 (ms)
- */
+void mb_tiny_master_set_uart(mb_tiny_master_t *master,
+                             mb_tiny_send_cb_t send_cb,
+                             mb_tiny_recv_cb_t recv_cb);
 void mb_tiny_master_set_timeout(mb_tiny_master_t *master, uint32_t timeout_ms);
 
-/**
- * @brief 读保持寄存器 (0x03)
- * @param master 主站句柄
- * @param slave_id 从站 ID
- * @param addr 起始地址
- * @param count 寄存器数量
- * @param data 数据缓冲区
- * @return MB_TINY_OK 成功
- */
 int mb_tiny_master_read_holding(mb_tiny_master_t *master, uint8_t slave_id,
-                                 uint16_t addr, uint16_t count, uint16_t *data);
-
-/**
- * @brief 写单个寄存器 (0x06)
- * @param master 主站句柄
- * @param slave_id 从站 ID
- * @param addr 寄存器地址
- * @param value 寄存器值
- * @return MB_TINY_OK 成功
- */
+                                uint16_t addr, uint16_t count, uint16_t *data);
+int mb_tiny_master_read_input(mb_tiny_master_t *master, uint8_t slave_id,
+                              uint16_t addr, uint16_t count, uint16_t *data);
 int mb_tiny_master_write_reg(mb_tiny_master_t *master, uint8_t slave_id,
-                               uint16_t addr, uint16_t value);
-
-/**
- * @brief 写多个寄存器 (0x10)
- * @param master 主站句柄
- * @param slave_id 从站 ID
- * @param addr 起始地址
- * @param count 寄存器数量
- * @param data 数据
- * @return MB_TINY_OK 成功
- */
+                             uint16_t addr, uint16_t value);
 int mb_tiny_master_write_regs(mb_tiny_master_t *master, uint8_t slave_id,
-                                uint16_t addr, uint16_t count, const uint16_t *data);
-
-/**
- * @brief 读线圈 (0x01)
- * @param master 主站句柄
- * @param slave_id 从站 ID
- * @param addr 起始地址
- * @param count 线圈数量
- * @param data 数据缓冲区
- * @return MB_TINY_OK 成功
- */
+                              uint16_t addr, uint16_t count,
+                              const uint16_t *data);
 int mb_tiny_master_read_coils(mb_tiny_master_t *master, uint8_t slave_id,
-                                uint16_t addr, uint16_t count, uint8_t *data);
-
-/**
- * @brief 写单个线圈 (0x05)
- * @param master 主站句柄
- * @param slave_id 从站 ID
- * @param addr 线圈地址
- * @param value 线圈值 (0x0000 或 0xFF00)
- * @return MB_TINY_OK 成功
- */
+                              uint16_t addr, uint16_t count, uint8_t *data);
+int mb_tiny_master_read_discrete(mb_tiny_master_t *master, uint8_t slave_id,
+                                 uint16_t addr, uint16_t count, uint8_t *data);
 int mb_tiny_master_write_coil(mb_tiny_master_t *master, uint8_t slave_id,
-                               uint16_t addr, uint16_t value);
+                              uint16_t addr, uint16_t value);
+int mb_tiny_master_write_coils(mb_tiny_master_t *master, uint8_t slave_id,
+                               uint16_t addr, uint16_t count,
+                               const uint8_t *data);
 
-/* ==================== 工具函数 ==================== */
+/* ==================== Utility API ==================== */
 
-/**
- * @brief 计算 CRC16 (Modbus)
- * @param data 数据
- * @param len 长度
- * @return CRC16 值
- */
 uint16_t mb_tiny_crc16(const uint8_t *data, uint16_t len);
 
 #ifdef __cplusplus

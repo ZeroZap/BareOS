@@ -29,6 +29,10 @@ extern __IO uint32_t mwTick;
 
 #define PLB_N32_UART5_RX_WINDOW_MS 1000u
 
+#ifndef PLB_N32_UART5_RX_VERBOSE
+#define PLB_N32_UART5_RX_VERBOSE 1
+#endif
+
 #ifndef PLB_N32_PM_LOG_INTERVAL_MS
 #define PLB_N32_PM_LOG_INTERVAL_MS 60000u
 #endif
@@ -206,8 +210,7 @@ int main(void)
         at_ready = true;
 #endif
         if (pm_ready) {
-            (void)xy_pm_register_sleep_check(at_obj_pm_can_sleep,
-                                             plb_n32_at_obj());
+            (void)xy_pm_register_sleep_check(plb_n32_at_pm_can_sleep, NULL);
         }
 #if PLB_N32_ENABLE_AT_SELFTEST
         xy_log_i("PLB-N32 AT client ready on UART5, selftest enabled");
@@ -278,11 +281,13 @@ int main(void)
         }
         if (g_n32_uart5_rx_count != last_uart5_rx_count) {
             last_uart5_rx_count = g_n32_uart5_rx_count;
+#if PLB_N32_UART5_RX_VERBOSE
             xy_log_i("PLB-N32 UART5 RX count=%u rb=%u drop=%u last=%x",
                      (unsigned int)g_n32_uart5_rx_count,
                      (unsigned int)g_n32_uart5_rb_pending,
-                     (unsigned int)g_n32_uart5_rx_drop_count,
-                     (unsigned int)g_n32_uart5_last_rx);
+                      (unsigned int)g_n32_uart5_rx_drop_count,
+                      (unsigned int)g_n32_uart5_last_rx);
+#endif
         }
         if (uart5_rx_window_open &&
             (int32_t)(now_ms - uart5_rx_deadline_ms) >= 0) {

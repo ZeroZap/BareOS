@@ -220,6 +220,20 @@ static void test_urc_recv_split(void)
         TEST_MEM_EQ(payload, "HELLO", 5);
     }
 
+    TEST_CASE("Sprint1: at_urc_recv_split excludes trailing CRLF from payload") {
+        const char *full = "+TEST,3,5:HELLO\r\n";
+        at_urc_info_t info = {URC_RECV_OK, (char *)full, (int)strlen(full)};
+        int id = -99, plen = -99;
+        const char *payload = NULL;
+        int rc = at_urc_recv_split(&info, parse_test_hdr, 2,
+                                   &id, &payload, &plen);
+
+        TEST_EQ(rc, 0);
+        TEST_EQ(id, 3);
+        TEST_EQ(plen, 5);
+        TEST_MEM_EQ(payload, "HELLO", 5);
+    }
+
     /* Bad header (no comma) → rc < 0 */
     TEST_CASE("Sprint1: at_urc_recv_split rejects malformed header") {
         const char *bad = "+TEST garbage";
@@ -239,6 +253,24 @@ static void test_urc_recv_split(void)
                                     &id, &payload, &plen) < 0);
         at_urc_info_t info = {0, "x", 1};
         TEST_TRUE(at_urc_recv_split(&info, NULL, 0,
+                                    &id, &payload, &plen) < 0);
+    }
+
+    TEST_CASE("Sprint1: at_urc_recv_split rejects timeout and malformed trail") {
+        int id, plen;
+        const char *payload;
+        char timeout_frame[] = "+TEST,0,5:ABC";
+        char bad_trail[] = "+TEST,0,3:TOOL\r";
+        at_urc_info_t timeout_info = {
+            URC_RECV_TIMEOUT, timeout_frame, (int)strlen(timeout_frame)
+        };
+        at_urc_info_t trail_info = {
+            URC_RECV_OK, bad_trail, (int)strlen(bad_trail)
+        };
+
+        TEST_TRUE(at_urc_recv_split(&timeout_info, parse_test_hdr, 0,
+                                    &id, &payload, &plen) < 0);
+        TEST_TRUE(at_urc_recv_split(&trail_info, parse_test_hdr, 2,
                                     &id, &payload, &plen) < 0);
     }
 }
@@ -373,6 +405,13 @@ static void fake_inject(const char *data)
     memcpy(s_fake_read_buf, data, s_fake_read_len);
 }
 
+static void fake_inject_bytes(const unsigned char *data, unsigned int len)
+{
+    s_fake_read_len = len;
+    s_fake_read_pos = 0u;
+    memcpy(s_fake_read_buf, data, len);
+}
+
 static char *fake_contains(at_env_t *e, const char *s)
 { (void)e; return strstr(s_recv_inject, s); }
 static bool fake_is_timeout(at_env_t *e, unsigned int ms)
@@ -469,6 +508,16 @@ static at_resp_code s_callback_code;
 static unsigned int s_callback_count;
 static unsigned int s_callback_recv_len;
 static char s_callback_response[128];
+static at_response_t s_error_hook_response;
+static unsigned int s_error_hook_count;
+static bool s_error_hook_before_callback;
+
+static void command_error_hook(at_response_t *response)
+{
+    s_error_hook_before_callback = s_callback_count == 0u;
+    s_error_hook_response = *response;
+    s_error_hook_count++;
+}
 
 static void command_callback(at_response_t *response)
 {
@@ -491,6 +540,9 @@ static void command_fixture_reset(void)
     s_callback_count = 0u;
     s_callback_recv_len = 0u;
     s_callback_response[0] = '\0';
+    memset(&s_error_hook_response, 0, sizeof(s_error_hook_response));
+    s_error_hook_count = 0u;
+    s_error_hook_before_callback = false;
 }
 
 static int failing_println_work(at_env_t *env)
@@ -520,6 +572,36 @@ static int double_println_work(at_env_t *env)
     return 0;
 }
 
+static void hold_custom_command(at_env_t *env)
+{
+    (void)env;
+}
+
+static unsigned int s_wrap_wait_runs;
+
+static int wrap_wait_work(at_env_t *env)
+{
+    if (env->state == 0) {
+        env->next_wait(env, 300u);
+        env->state = 1;
+        return 0;
+    }
+    s_wrap_wait_runs++;
+    env->finish(env, AT_RESP_OK);
+    return 0;
+}
+
+static unsigned int s_queue_order[AT_LIST_WORK_COUNT];
+static unsigned int s_queue_order_count;
+
+static void queue_record_work(at_env_t *env)
+{
+    if (s_queue_order_count < AT_LIST_WORK_COUNT) {
+        s_queue_order[s_queue_order_count++] = *(unsigned int *)env->params;
+    }
+    env->finish(env, AT_RESP_OK);
+}
+
 static at_obj_t *command_create_object(void)
 {
     static const at_adapter_t adapter = {
@@ -528,6 +610,26 @@ static at_obj_t *command_create_object(void)
         .write = fake_write,
         .read = fake_read,
         .error = NULL,
+        .debug = NULL,
+#if AT_URC_WARCH_EN
+        .urc_bufsize = 128u,
+#endif
+        .recv_bufsize = 128u,
+        .rx_pending = fake_rx_pending,
+        .tx_idle = fake_tx_idle,
+    };
+
+    return at_obj_create(&adapter);
+}
+
+static at_obj_t *command_create_error_object(void)
+{
+    static const at_adapter_t adapter = {
+        .lock = NULL,
+        .unlock = NULL,
+        .write = fake_write,
+        .read = fake_read,
+        .error = command_error_hook,
         .debug = NULL,
 #if AT_URC_WARCH_EN
         .urc_bufsize = 128u,
@@ -551,6 +653,89 @@ static unsigned int count_command_writes(const char *command)
     return count;
 }
 
+static unsigned int s_fake_urc_count;
+static unsigned int s_fake_urc_timeout_count;
+
+static int fake_prompt_urc_handler(at_urc_info_t *info)
+{
+    s_fake_urc_count++;
+    if (info->status == URC_RECV_TIMEOUT) s_fake_urc_timeout_count++;
+    return 0;
+}
+
+static const urc_item_t s_fake_prompt_urc_table[] = {
+    { "+FAKE: >", '\n', fake_prompt_urc_handler },
+    { "+FAKE: SEND OK", '\n', fake_prompt_urc_handler },
+    { "+FAKE: ERROR", '\n', fake_prompt_urc_handler },
+};
+
+static int fake_partial_urc_handler(at_urc_info_t *info)
+{
+    s_fake_urc_count++;
+    if (info->status == URC_RECV_TIMEOUT) {
+        s_fake_urc_timeout_count++;
+        return 0;
+    }
+    return info->urclen <= 10 ? 7 : 0;
+}
+
+static const urc_item_t s_fake_partial_urc_table[] = {
+    { "+FAKEBIN", '\n', fake_partial_urc_handler },
+};
+
+static int fake_partial_send_ok_urc_handler(at_urc_info_t *info)
+{
+    s_fake_urc_count++;
+    if (info->status == URC_RECV_TIMEOUT) {
+        s_fake_urc_timeout_count++;
+        return 0;
+    }
+    return info->urclen <= 10 ? 9 : 0;
+}
+
+static const urc_item_t s_fake_partial_send_ok_urc_table[] = {
+    { "+FAKEBIN", '\n', fake_partial_send_ok_urc_handler },
+};
+
+static unsigned int s_prefix_short_count;
+static unsigned int s_prefix_long_count;
+
+static int prefix_short_handler(at_urc_info_t *info)
+{
+    (void)info;
+    s_prefix_short_count++;
+    return 0;
+}
+
+static int prefix_long_handler(at_urc_info_t *info)
+{
+    (void)info;
+    s_prefix_long_count++;
+    return 0;
+}
+
+static const urc_item_t s_prefix_overlap_table[] = {
+    { "+SIM:", '\n', prefix_short_handler },
+    { "+SIM: LONG", '\n', prefix_long_handler },
+};
+
+static int prompt_keyword_isolation_work(at_env_t *env)
+{
+    static const char payload[] = "ABC";
+
+    if (env->state == 0) {
+        env->println(env, "AT+SEND");
+        env->reset_timer(env);
+        env->state = 1;
+        return 0;
+    }
+    int rc = at_prompt_send_step(env, payload, sizeof(payload) - 1u,
+                                 "SEND OK", NULL, NULL, 5000u, 10000u);
+    if (rc > 0) env->finish(env, AT_RESP_OK);
+    else if (rc < 0) env->finish(env, AT_RESP_ERROR);
+    return 0;
+}
+
 static void test_at_command_queue(void)
 {
     TEST_CASE("AT create: rejects missing adapter callbacks") {
@@ -561,6 +746,155 @@ static void test_at_command_queue(void)
         TEST_TRUE(at_obj_create(&adapter) == NULL);
         adapter.write = fake_write;
         TEST_TRUE(at_obj_create(&adapter) == NULL);
+    }
+
+    TEST_CASE("AT queue: priority full abort and immediate static pool reuse") {
+        at_context_t contexts[AT_LIST_WORK_COUNT];
+        unsigned int ids[AT_LIST_WORK_COUNT];
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            s_queue_order_count = 0u;
+            for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT; i++) {
+                ids[i] = i;
+                at_attr_deinit(&attr);
+                at_context_init(&contexts[i], NULL, 0u);
+                at_context_attach(&attr, &contexts[i]);
+                attr.params = &ids[i];
+                attr.priority = i < AT_LIST_WORK_COUNT / 2u
+                                ? AT_PRIORITY_LOW : AT_PRIORITY_HIGH;
+                TEST_TRUE(at_custom_cmd(at, &attr, queue_record_work));
+            }
+            TEST_FALSE(at_custom_cmd(at, NULL, queue_record_work));
+
+            at_work_abort_all(at);
+            TEST_FALSE(at_obj_busy(at));
+            for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT; i++) {
+                TEST_EQ(at_work_get_state(&contexts[i]), AT_WORK_STAT_ABORT);
+                TEST_EQ(at_work_get_result(&contexts[i]), AT_RESP_ABORT);
+            }
+
+            for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT; i++) {
+                at_attr_deinit(&attr);
+                attr.params = &ids[i];
+                attr.priority = i < AT_LIST_WORK_COUNT / 2u
+                                ? AT_PRIORITY_LOW : AT_PRIORITY_HIGH;
+                TEST_TRUE(at_custom_cmd(at, &attr, queue_record_work));
+            }
+            TEST_FALSE(at_custom_cmd(at, NULL, queue_record_work));
+            while (at_obj_busy(at)) at_obj_process(at);
+
+            TEST_EQ(s_queue_order_count, AT_LIST_WORK_COUNT);
+            for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT / 2u; i++) {
+                TEST_EQ(s_queue_order[i], i + AT_LIST_WORK_COUNT / 2u);
+                TEST_EQ(s_queue_order[i + AT_LIST_WORK_COUNT / 2u], i);
+            }
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: multiple objects share pool without cross-object abort") {
+        at_context_t contexts[8];
+        unsigned int ids[8];
+        at_attr_t attr;
+        at_obj_t *objects[3];
+
+        command_fixture_reset();
+        objects[0] = command_create_object();
+        objects[1] = command_create_object();
+        objects[2] = command_create_object();
+        TEST_TRUE(objects[0] != NULL);
+        TEST_TRUE(objects[1] != NULL);
+        TEST_TRUE(objects[2] != NULL);
+        if (objects[0] != NULL && objects[1] != NULL && objects[2] != NULL) {
+            for (unsigned int i = 0u; i < 8u; i++) {
+                unsigned int object = i < 3u ? 0u : (i < 6u ? 1u : 2u);
+
+                ids[i] = i;
+                at_attr_deinit(&attr);
+                at_context_init(&contexts[i], NULL, 0u);
+                at_context_attach(&attr, &contexts[i]);
+                attr.params = &ids[i];
+                TEST_TRUE(at_custom_cmd(objects[object], &attr, queue_record_work));
+            }
+            TEST_FALSE(at_custom_cmd(objects[0], NULL, queue_record_work));
+
+            at_work_abort_all(objects[1]);
+            for (unsigned int i = 0u; i < 8u; i++) {
+                at_work_state expected = i >= 3u && i < 6u
+                                         ? AT_WORK_STAT_ABORT
+                                         : AT_WORK_STAT_READY;
+                TEST_EQ(at_work_get_state(&contexts[i]), expected);
+            }
+            TEST_TRUE(at_obj_busy(objects[0]));
+            TEST_FALSE(at_obj_busy(objects[1]));
+            TEST_TRUE(at_obj_busy(objects[2]));
+
+            for (unsigned int i = 0u; i < 3u; i++) {
+                at_attr_deinit(&attr);
+                attr.params = &ids[3u + i];
+                TEST_TRUE(at_custom_cmd(objects[1], &attr, queue_record_work));
+            }
+            while (at_obj_busy(objects[0]) || at_obj_busy(objects[1]) ||
+                   at_obj_busy(objects[2])) {
+                at_obj_process(objects[0]);
+                at_obj_process(objects[1]);
+                at_obj_process(objects[2]);
+            }
+            TEST_TRUE(at_obj_pm_can_sleep(objects[0]));
+            TEST_TRUE(at_obj_pm_can_sleep(objects[1]));
+            TEST_TRUE(at_obj_pm_can_sleep(objects[2]));
+        }
+        at_obj_destroy(objects[0]);
+        at_obj_destroy(objects[1]);
+        at_obj_destroy(objects[2]);
+    }
+
+    TEST_CASE("AT destroy aborts active and queued contexts then reuses pool") {
+        at_context_t contexts[AT_LIST_WORK_COUNT];
+        unsigned int ids[AT_LIST_WORK_COUNT];
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT; i++) {
+                ids[i] = i;
+                at_attr_deinit(&attr);
+                at_context_init(&contexts[i], NULL, 0u);
+                at_context_attach(&attr, &contexts[i]);
+                attr.params = &ids[i];
+                TEST_TRUE(at_custom_cmd(at, &attr, hold_custom_command));
+            }
+            at_obj_process(at);
+            TEST_EQ(at_work_get_state(&contexts[0]), AT_WORK_STAT_RUN);
+
+            at_obj_destroy(at);
+            for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT; i++) {
+                TEST_EQ(at_work_get_state(&contexts[i]), AT_WORK_STAT_ABORT);
+                TEST_EQ(at_work_get_result(&contexts[i]), AT_RESP_ABORT);
+            }
+
+            at = command_create_object();
+            TEST_TRUE(at != NULL);
+            if (at != NULL) {
+                for (unsigned int i = 0u; i < AT_LIST_WORK_COUNT; i++) {
+                    at_attr_deinit(&attr);
+                    attr.params = &ids[i];
+                    TEST_TRUE(at_custom_cmd(at, &attr, queue_record_work));
+                }
+                TEST_FALSE(at_custom_cmd(at, NULL, queue_record_work));
+                at_work_abort_all(at);
+                TEST_FALSE(at_obj_busy(at));
+                at_obj_destroy(at);
+            }
+        }
     }
 
     TEST_CASE("AT queue: command appends CRLF and accepts fragmented response") {
@@ -592,6 +926,336 @@ static void test_at_command_queue(void)
             TEST_EQ(s_callback_code, AT_RESP_OK);
             TEST_TRUE(strstr(s_callback_response, "+CSQ: 18,0") != NULL);
             TEST_TRUE(s_callback_recv_len > 0u);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT error hook receives initialized response before callback") {
+        unsigned int params = 0x12345678u;
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_error_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.params = &params;
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+FAIL"));
+            at_obj_process(at);
+            fake_inject("\r\nERROR\r\n");
+            at_obj_process(at);
+
+            TEST_EQ(s_error_hook_count, 1u);
+            TEST_TRUE(s_error_hook_before_callback);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_TRUE(s_error_hook_response.obj == at);
+            TEST_TRUE(s_error_hook_response.params == &params);
+            TEST_EQ(s_error_hook_response.code, AT_RESP_ERROR);
+            TEST_EQ(s_error_hook_response.recvcnt, 9u);
+            TEST_TRUE(s_error_hook_response.recvbuf != NULL);
+            TEST_TRUE(strstr(s_error_hook_response.recvbuf, "ERROR") != NULL);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: idle input does not pollute next command response") {
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            fake_inject("\r\nIDLE-NOISE\r\n");
+            at_obj_process(at);
+
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.timeout = 50u;
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT"));
+            at_obj_process(at);
+            fake_inject("\r\nOK\r\n");
+            at_obj_process(at);
+
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            TEST_TRUE(strstr(s_callback_response, "IDLE-NOISE") == NULL);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: payload keyword cannot satisfy prompt") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_prompt_urc_table,
+                           sizeof(s_fake_prompt_urc_table) /
+                           sizeof(s_fake_prompt_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            TEST_MEM_EQ(s_fake_write_buf, "AT+SEND\r\n", 9u);
+
+            fake_inject("\r\n+FAKE: ");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 9u);
+            fake_inject(">\n");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_EQ(s_fake_write_len, 9u);
+
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+            TEST_MEM_EQ(&s_fake_write_buf[9], "ABC", 3u);
+
+            fake_inject("\r\nSEND OK\r\n");
+            at_obj_process(at);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC: longest anchored prefix wins independent of table order") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_prefix_short_count = 0u;
+        s_prefix_long_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_prefix_overlap_table,
+                           sizeof(s_prefix_overlap_table) /
+                           sizeof(s_prefix_overlap_table[0]));
+            fake_inject("\r\n+SIM: LONG FIRST\r\n");
+            at_obj_process(at);
+            fake_inject("\r\n+SIM: SHORT\r\n");
+            at_obj_process(at);
+            fake_inject("\r\n+SIM: LONG EMBED +SIM: SHORT\r\n");
+            at_obj_process(at);
+            fake_inject("\r\n+SIMX: MALFORMED\r\n");
+            at_obj_process(at);
+
+            TEST_EQ(s_prefix_long_count, 2u);
+            TEST_EQ(s_prefix_short_count, 1u);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: payload keyword cannot satisfy send result") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_prompt_urc_table,
+                           sizeof(s_fake_prompt_urc_table) /
+                           sizeof(s_fake_prompt_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+
+            fake_inject("\r\n+FAKE: SEND OK\n");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            fake_inject("\r\nSEND OK\r\n");
+            at_obj_process(at);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: payload keyword cannot fail send result") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_prompt_urc_table,
+                           sizeof(s_fake_prompt_urc_table) /
+                           sizeof(s_fake_prompt_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+
+            fake_inject("\r\n+FAKE: ERROR\n");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            fake_inject("\r\nSEND OK\r\n");
+            at_obj_process(at);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: partial error waits for timeout cleanup") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        s_fake_urc_timeout_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_partial_urc_table,
+                           sizeof(s_fake_partial_urc_table) /
+                           sizeof(s_fake_partial_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+
+            fake_inject("\r\n+FAKEBIN\nERROR");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(499u));
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_timeout_count, 0u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(1u));
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_timeout_count, 0u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(1u));
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 2u);
+            TEST_EQ(s_fake_urc_timeout_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            fake_inject("\r\nSEND OK\r\n");
+            at_obj_process(at);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: response can supply partial URC tail") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        s_fake_urc_timeout_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_partial_urc_table,
+                           sizeof(s_fake_partial_urc_table) /
+                           sizeof(s_fake_partial_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+
+            fake_inject("\r\n+FAKEBIN\nERROR");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(300u));
+            fake_inject("\r\nSEND OK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 2u);
+            TEST_EQ(s_fake_urc_timeout_count, 0u);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: partial SEND OK cannot hide real error") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        s_fake_urc_timeout_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_partial_send_ok_urc_table,
+                           sizeof(s_fake_partial_send_ok_urc_table) /
+                           sizeof(s_fake_partial_send_ok_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+
+            fake_inject("\r\n+FAKEBIN\nSEND OK");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(501u));
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 2u);
+            TEST_EQ(s_fake_urc_timeout_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(199u));
+            fake_inject("\r\nERROR\r\n");
+            at_obj_process(at);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT URC isolation: real error can supply fake success tail") {
+        at_obj_t *at;
+
+        command_fixture_reset();
+        s_fake_urc_count = 0u;
+        s_fake_urc_timeout_count = 0u;
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_obj_set_urc(at, s_fake_partial_send_ok_urc_table,
+                           sizeof(s_fake_partial_send_ok_urc_table) /
+                           sizeof(s_fake_partial_send_ok_urc_table[0]));
+            TEST_TRUE(at_do_work(at, NULL, prompt_keyword_isolation_work));
+            at_obj_process(at);
+            fake_inject(">");
+            at_obj_process(at);
+            TEST_EQ(s_fake_write_len, 12u);
+
+            fake_inject("\r\n+FAKEBIN\nSEND OK");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            xy_tick_advance(xy_tick_from_ms(300u));
+            fake_inject("\r\nERROR\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_fake_urc_count, 2u);
+            TEST_EQ(s_fake_urc_timeout_count, 0u);
             TEST_FALSE(at_obj_busy(at));
             at_obj_destroy(at);
         }
@@ -652,6 +1316,154 @@ static void test_at_command_queue(void)
             TEST_EQ(count_command_writes("AT+NORESP\r\n"), 3u);
             TEST_EQ(s_callback_count, 1u);
             TEST_EQ(s_callback_code, AT_RESP_TIMEOUT);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT timing: next_wait and timeout retry survive uint32 wrap") {
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            xy_tick_set(0xffffff00u);
+            s_wrap_wait_runs = 0u;
+            TEST_TRUE(at_do_work(at, NULL, wrap_wait_work));
+            at_obj_process(at);
+            xy_tick_advance(299u);
+            at_obj_process(at);
+            TEST_EQ(s_wrap_wait_runs, 0u);
+            xy_tick_advance(2u);
+            at_obj_process(at);
+            TEST_EQ(s_wrap_wait_runs, 1u);
+            TEST_TRUE(xy_tick_now() < 0xffffff00u);
+
+            xy_tick_set(0xffffff00u);
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.timeout = 300u;
+            attr.retry = 1u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+WRAP"));
+            for (unsigned int attempt = 0u; attempt < 2u; attempt++) {
+                at_obj_process(at);
+                xy_tick_advance(301u);
+                at_obj_process(at);
+            }
+            TEST_EQ(count_command_writes("AT+WRAP\r\n"), 2u);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_TIMEOUT);
+            TEST_TRUE(xy_tick_now() < 0xffffff00u);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: late retry response cannot complete next prefixed work") {
+        at_attr_t attr;
+        at_obj_t *at;
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.prefix = "+SIMLATEA:";
+            attr.timeout = 500u;
+            attr.retry = 1u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+SIMLATEA"));
+            at_obj_process(at);
+
+            xy_tick_advance(xy_tick_from_ms(501u));
+            at_obj_process(at);
+            at_obj_process(at);
+            TEST_EQ(count_command_writes("AT+SIMLATEA\r\n"), 2u);
+
+            fake_inject("\r\n+SIMLATEA: FIRST\r\n\r\nOK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            TEST_FALSE(at_obj_busy(at));
+
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.prefix = "+SIMLATEB:";
+            attr.timeout = 1000u;
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+SIMLATEB"));
+            at_obj_process(at);
+
+            fake_inject("\r\n+SIMLATEA: SECOND\r\n\r\nOK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 1u);
+            TEST_TRUE(at_obj_busy(at));
+
+            fake_inject("\r\n+SIMLATEB: CURRENT\r\n\r\nOK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 2u);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            TEST_TRUE(strstr(s_callback_response, "+SIMLATEA: SECOND") != NULL);
+            TEST_TRUE(strstr(s_callback_response, "+SIMLATEB: CURRENT") != NULL);
+            TEST_FALSE(at_obj_busy(at));
+            at_obj_destroy(at);
+        }
+    }
+
+    TEST_CASE("AT queue: response buffer boundary reports overflow without wrap") {
+        at_attr_t attr;
+        at_obj_t *at;
+        char response[130];
+
+        command_fixture_reset();
+        at = command_create_object();
+        TEST_TRUE(at != NULL);
+        if (at != NULL) {
+            memset(response, 'X', 127u);
+            memcpy(response, "+SIMBUF:", 8u);
+            memcpy(response + 121u, "\r\nOK\r\n", 6u);
+
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.prefix = "+SIMBUF:";
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+SIMBUF=127"));
+            at_obj_process(at);
+            fake_inject_bytes((const unsigned char *)response, 127u);
+            at_obj_process(at);
+            TEST_EQ(s_callback_count, 0u);
+            at_obj_process(at);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            TEST_EQ(s_callback_recv_len, 127u);
+
+            memset(response, 'X', 128u);
+            memcpy(response, "+SIMBUF:", 8u);
+            memcpy(response + 122u, "\r\nOK\r\n", 6u);
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.prefix = "+SIMBUF:";
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+SIMBUF=128"));
+            at_obj_process(at);
+            fake_inject_bytes((const unsigned char *)response, 128u);
+            at_obj_process(at);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
+            at_obj_process(at);
+            TEST_EQ(s_callback_code, AT_RESP_ERROR);
+            TEST_EQ(s_callback_recv_len, 127u);
+            TEST_FALSE(at_obj_busy(at));
+
+            at_attr_deinit(&attr);
+            attr.cb = command_callback;
+            attr.prefix = "+RECOVER:";
+            attr.retry = 0u;
+            TEST_TRUE(at_exec_cmd(at, &attr, "AT+SIMBUF=RECOVER"));
+            at_obj_process(at);
+            fake_inject("\r\n+RECOVER: READY\r\n\r\nOK\r\n");
+            at_obj_process(at);
+            TEST_EQ(s_callback_code, AT_RESP_OK);
             TEST_FALSE(at_obj_busy(at));
             at_obj_destroy(at);
         }

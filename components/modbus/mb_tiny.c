@@ -1,8 +1,8 @@
 /**
  * @file mb_tiny.c
- * @brief Nano Modbus Tiny Implementation - RTU Only, Minimal Footprint
- * @version 1.0.0
- * @date 2026-03-31
+ * @brief Nano Modbus Tiny implementation - bounded RTU ADU processing
+ * @version 1.1.0
+ * @date 2026-08-23
  */
 
 #include "mb_tiny.h"
@@ -10,682 +10,896 @@
 
 /* ==================== CRC16 ==================== */
 
-static const uint16_t crc16_table[256] = {
-    0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
-    0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
-    0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
-    0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
-    0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
-    0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
-    0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
-    0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
-    0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
-    0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
-    0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
-    0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
-    0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
-    0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
-    0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
-    0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
-    0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
-    0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
-    0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
-    0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
-    0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
-    0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
-    0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
-    0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
-    0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
-    0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
-    0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
-    0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
-    0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
-    0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
-    0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
-    0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
-};
+uint16_t mb_tiny_crc16(const uint8_t *data, uint16_t len) {
+  uint16_t crc;
+  uint16_t i;
+  uint8_t bit;
 
-uint16_t mb_tiny_crc16(const uint8_t *data, uint16_t len)
-{
-    uint16_t crc = 0xFFFF;
-    for (uint16_t i = 0; i < len; i++) {
-        crc = (crc >> 8) ^ crc16_table[(crc ^ data[i]) & 0xFF];
+  if (data == NULL && len != 0U) {
+    return 0U;
+  }
+
+  crc = 0xFFFFU;
+  for (i = 0U; i < len; i++) {
+    crc ^= data[i];
+    for (bit = 0U; bit < 8U; bit++) {
+      if ((crc & 1U) != 0U) {
+        crc = (uint16_t)((crc >> 1U) ^ 0xA001U);
+      } else {
+        crc >>= 1U;
+      }
     }
-    return crc;
+  }
+  return crc;
 }
 
-/* ==================== 从站实现 ==================== */
+/* ==================== Common helpers ==================== */
 
-/* 发送回调 (NULL by default) */
-static mb_tiny_send_cb_t g_slave_send_cb = NULL;
+static uint16_t mb_get_u16_be(const uint8_t *data) {
+  return (uint16_t)(((uint16_t)data[0] << 8U) | data[1]);
+}
 
-int mb_tiny_slave_init(mb_tiny_slave_t *slave, uint8_t slave_id)
-{
-    if (!slave) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    memset(slave, 0, sizeof(*slave));
-    slave->slave_id = slave_id;
-    slave->initialized = true;
-    
-    return MB_TINY_OK;
+static void mb_put_u16_be(uint8_t *data, uint16_t value) {
+  data[0] = (uint8_t)(value >> 8U);
+  data[1] = (uint8_t)value;
+}
+
+static bool mb_unit_id_is_valid(uint8_t unit_id) {
+  return unit_id >= 1U && unit_id <= 247U;
+}
+
+static bool mb_range_contains(uint16_t map_start, uint16_t map_count,
+                              uint16_t req_start, uint16_t req_count) {
+  uint32_t map_end;
+  uint32_t req_end;
+
+  if (map_count == 0U || req_count == 0U || req_start < map_start) {
+    return false;
+  }
+
+  map_end = (uint32_t)map_start + (uint32_t)map_count;
+  req_end = (uint32_t)req_start + (uint32_t)req_count;
+  return map_end <= 0x10000UL && req_end <= map_end;
+}
+
+static bool mb_frame_crc_is_valid(const uint8_t *data, uint16_t len) {
+  uint16_t received;
+
+  if (data == NULL || len < MB_TINY_MIN_ADU_SIZE) {
+    return false;
+  }
+
+  received = (uint16_t)(((uint16_t)data[len - 1U] << 8U) | data[len - 2U]);
+  return received == mb_tiny_crc16(data, (uint16_t)(len - 2U));
+}
+
+static uint16_t mb_append_crc(uint8_t *data, uint16_t payload_len) {
+  uint16_t crc;
+
+  crc = mb_tiny_crc16(data, payload_len);
+  data[payload_len] = (uint8_t)crc;
+  data[payload_len + 1U] = (uint8_t)(crc >> 8U);
+  return (uint16_t)(payload_len + 2U);
+}
+
+static bool mb_coil_get(const mb_tiny_coils_t *map, uint16_t address) {
+  uint16_t offset;
+
+  offset = (uint16_t)(address - map->start_addr);
+  return (map->data[offset / 8U] & (uint8_t)(1U << (offset % 8U))) != 0U;
+}
+
+static void mb_coil_set(mb_tiny_coils_t *map, uint16_t address, bool value) {
+  uint16_t offset;
+  uint8_t mask;
+
+  offset = (uint16_t)(address - map->start_addr);
+  mask = (uint8_t)(1U << (offset % 8U));
+  if (value) {
+    map->data[offset / 8U] |= mask;
+  } else {
+    map->data[offset / 8U] &= (uint8_t)~mask;
+  }
+}
+
+/* ==================== Slave implementation ==================== */
+
+int mb_tiny_slave_init(mb_tiny_slave_t *slave, uint8_t slave_id) {
+  if (slave == NULL || !mb_unit_id_is_valid(slave_id)) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  memset(slave, 0, sizeof(*slave));
+  slave->slave_id = slave_id;
+  slave->initialized = true;
+  return MB_TINY_OK;
 }
 
 int mb_tiny_slave_config_holding(mb_tiny_slave_t *slave, uint16_t *data,
-                                  uint16_t start_addr, uint16_t count)
-{
-    if (!slave || !data || count == 0) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    slave->holding.data = data;
-    slave->holding.start_addr = start_addr;
-    slave->holding.count = count;
-    
-    return MB_TINY_OK;
+                                 uint16_t start_addr, uint16_t count) {
+  if (slave == NULL || !slave->initialized || data == NULL || count == 0U ||
+      (uint32_t)start_addr + count > 0x10000UL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  slave->holding.data = data;
+  slave->holding.start_addr = start_addr;
+  slave->holding.count = count;
+  return MB_TINY_OK;
 }
 
 int mb_tiny_slave_config_coils(mb_tiny_slave_t *slave, uint8_t *data,
-                                uint16_t start_addr, uint16_t count)
-{
-    if (!slave || !data || count == 0) {
-        return MB_TINY_INVALID_PARAM;
+                               uint16_t start_addr, uint16_t count) {
+  if (slave == NULL || !slave->initialized || data == NULL || count == 0U ||
+      (uint32_t)start_addr + count > 0x10000UL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  slave->coils.data = data;
+  slave->coils.start_addr = start_addr;
+  slave->coils.count = count;
+  return MB_TINY_OK;
+}
+
+int mb_tiny_slave_config_input(mb_tiny_slave_t *slave, uint16_t *data,
+                               uint16_t start_addr, uint16_t count) {
+  if (slave == NULL || !slave->initialized || data == NULL || count == 0U ||
+      (uint32_t)start_addr + count > 0x10000UL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  slave->input.data = data;
+  slave->input.start_addr = start_addr;
+  slave->input.count = count;
+  return MB_TINY_OK;
+}
+
+int mb_tiny_slave_config_discrete(mb_tiny_slave_t *slave, uint8_t *data,
+                                  uint16_t start_addr, uint16_t count) {
+  if (slave == NULL || !slave->initialized || data == NULL || count == 0U ||
+      (uint32_t)start_addr + count > 0x10000UL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  slave->discrete.data = data;
+  slave->discrete.start_addr = start_addr;
+  slave->discrete.count = count;
+  return MB_TINY_OK;
+}
+
+void mb_tiny_slave_set_send(mb_tiny_slave_t *slave, mb_tiny_send_cb_t send_cb) {
+  if (slave != NULL) {
+    slave->send_cb = send_cb;
+  }
+}
+
+static int mb_tiny_slave_send(mb_tiny_slave_t *slave, const uint8_t *data,
+                              uint16_t len) {
+  int ret;
+
+  if (slave->send_cb == NULL) {
+    return MB_TINY_IO_ERROR;
+  }
+
+  ret = slave->send_cb(data, len);
+  return ret == (int)len ? MB_TINY_OK : MB_TINY_IO_ERROR;
+}
+
+static int mb_tiny_slave_finish(mb_tiny_slave_t *slave, uint8_t *response,
+                                uint16_t response_capacity,
+                                uint16_t payload_len, uint16_t *response_len,
+                                bool broadcast) {
+  if (broadcast) {
+    *response_len = 0U;
+    slave->request_count++;
+    return MB_TINY_NO_RESPONSE;
+  }
+  if ((uint32_t)payload_len + 2U > response_capacity) {
+    slave->error_count++;
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+
+  *response_len = mb_append_crc(response, payload_len);
+  slave->request_count++;
+  return MB_TINY_OK;
+}
+
+static int mb_tiny_slave_exception(mb_tiny_slave_t *slave, uint8_t function,
+                                   uint8_t exception, bool broadcast,
+                                   uint8_t *response,
+                                   uint16_t response_capacity,
+                                   uint16_t *response_len) {
+  slave->error_count++;
+  if (broadcast) {
+    *response_len = 0U;
+    return MB_TINY_NO_RESPONSE;
+  }
+  if (response_capacity < 5U) {
+    return MB_TINY_BUFFER_TOO_SMALL;
+  }
+
+  response[0] = slave->slave_id;
+  response[1] = (uint8_t)(function | 0x80U);
+  response[2] = exception;
+  *response_len = mb_append_crc(response, 3U);
+  return MB_TINY_EXCEPTION;
+}
+
+int mb_tiny_slave_process(mb_tiny_slave_t *slave, const uint8_t *data,
+                          uint16_t len, uint8_t *response,
+                          uint16_t response_capacity, uint16_t *response_len) {
+  uint8_t function;
+  uint16_t address;
+  uint16_t quantity;
+  uint16_t i;
+  bool broadcast;
+
+  if (slave == NULL || data == NULL || response == NULL ||
+      response_len == NULL || response_capacity == 0U || response == data) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  *response_len = 0U;
+  if (!slave->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (len < MB_TINY_MIN_ADU_SIZE || len > MB_TINY_MAX_ADU_SIZE) {
+    slave->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+  if (!mb_frame_crc_is_valid(data, len)) {
+    slave->error_count++;
+    return MB_TINY_CRC_ERROR;
+  }
+
+  broadcast = data[0] == 0U;
+  if (!broadcast && data[0] != slave->slave_id) {
+    return MB_TINY_IGNORED;
+  }
+
+  function = data[1];
+  switch (function) {
+  case MB_FUNC_READ_HOLDING:
+  case MB_FUNC_READ_INPUT: {
+    const mb_tiny_holding_t *map;
+    uint16_t payload_len;
+
+    map = function == MB_FUNC_READ_HOLDING ? &slave->holding : &slave->input;
+
+    if (broadcast) {
+      return MB_TINY_IGNORED;
     }
-    
-    slave->coils.data = data;
-    slave->coils.start_addr = start_addr;
-    slave->coils.count = count;
-    
+    if (len != 8U) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    address = mb_get_u16_be(&data[2]);
+    quantity = mb_get_u16_be(&data[4]);
+    if (quantity == 0U || quantity > MB_TINY_MAX_READ_REGS) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_VALUE,
+                                     false, response, response_capacity,
+                                     response_len);
+    }
+    if (map->data == NULL ||
+        !mb_range_contains(map->start_addr, map->count, address, quantity)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_ADDR,
+                                     false, response, response_capacity,
+                                     response_len);
+    }
+
+    payload_len = (uint16_t)(3U + quantity * 2U);
+    if ((uint32_t)payload_len + 2U > response_capacity) {
+      slave->error_count++;
+      return MB_TINY_BUFFER_TOO_SMALL;
+    }
+    response[0] = slave->slave_id;
+    response[1] = function;
+    response[2] = (uint8_t)(quantity * 2U);
+    for (i = 0U; i < quantity; i++) {
+      uint16_t value;
+      value = map->data[(uint16_t)(address - map->start_addr + i)];
+      mb_put_u16_be(&response[3U + i * 2U], value);
+    }
+    return mb_tiny_slave_finish(slave, response, response_capacity, payload_len,
+                                response_len, false);
+  }
+
+  case MB_FUNC_WRITE_SINGLE_REG:
+    if (len != 8U) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    address = mb_get_u16_be(&data[2]);
+    if (slave->holding.data == NULL ||
+        !mb_range_contains(slave->holding.start_addr, slave->holding.count,
+                           address, 1U)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_ADDR,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (!broadcast && response_capacity < 8U) {
+      slave->error_count++;
+      return MB_TINY_BUFFER_TOO_SMALL;
+    }
+    slave->holding.data[address - slave->holding.start_addr] =
+        mb_get_u16_be(&data[4]);
+    if (!broadcast) {
+      memcpy(response, data, 6U);
+    }
+    return mb_tiny_slave_finish(slave, response, response_capacity, 6U,
+                                response_len, broadcast);
+
+  case MB_FUNC_WRITE_MULTIPLE_REGS: {
+    uint8_t byte_count;
+    uint32_t expected_len;
+
+    if (len < 9U) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    address = mb_get_u16_be(&data[2]);
+    quantity = mb_get_u16_be(&data[4]);
+    byte_count = data[6];
+    expected_len = 9UL + (uint32_t)byte_count;
+    if (expected_len != len) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    if (quantity == 0U || quantity > MB_TINY_MAX_WRITE_REGS ||
+        (uint16_t)byte_count != (uint16_t)(quantity * 2U)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_VALUE,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (slave->holding.data == NULL ||
+        !mb_range_contains(slave->holding.start_addr, slave->holding.count,
+                           address, quantity)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_ADDR,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (!broadcast && response_capacity < 8U) {
+      slave->error_count++;
+      return MB_TINY_BUFFER_TOO_SMALL;
+    }
+
+    for (i = 0U; i < quantity; i++) {
+      slave->holding.data[(uint16_t)(address - slave->holding.start_addr + i)] =
+          mb_get_u16_be(&data[7U + i * 2U]);
+    }
+    if (!broadcast) {
+      response[0] = slave->slave_id;
+      response[1] = function;
+      memcpy(&response[2], &data[2], 4U);
+    }
+    return mb_tiny_slave_finish(slave, response, response_capacity, 6U,
+                                response_len, broadcast);
+  }
+
+  case MB_FUNC_READ_COILS:
+  case MB_FUNC_READ_DISCRETE: {
+    const mb_tiny_coils_t *map;
+    uint16_t byte_count;
+    uint16_t payload_len;
+
+    map = function == MB_FUNC_READ_COILS ? &slave->coils : &slave->discrete;
+
+    if (broadcast) {
+      return MB_TINY_IGNORED;
+    }
+    if (len != 8U) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    address = mb_get_u16_be(&data[2]);
+    quantity = mb_get_u16_be(&data[4]);
+    if (quantity == 0U || quantity > MB_TINY_MAX_READ_BITS) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_VALUE,
+                                     false, response, response_capacity,
+                                     response_len);
+    }
+    if (map->data == NULL ||
+        !mb_range_contains(map->start_addr, map->count, address, quantity)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_ADDR,
+                                     false, response, response_capacity,
+                                     response_len);
+    }
+
+    byte_count = (uint16_t)((quantity + 7U) / 8U);
+    payload_len = (uint16_t)(3U + byte_count);
+    if ((uint32_t)payload_len + 2U > response_capacity) {
+      slave->error_count++;
+      return MB_TINY_BUFFER_TOO_SMALL;
+    }
+    response[0] = slave->slave_id;
+    response[1] = function;
+    response[2] = (uint8_t)byte_count;
+    memset(&response[3], 0, byte_count);
+    for (i = 0U; i < quantity; i++) {
+      if (mb_coil_get(map, (uint16_t)(address + i))) {
+        response[3U + i / 8U] |= (uint8_t)(1U << (i % 8U));
+      }
+    }
+    return mb_tiny_slave_finish(slave, response, response_capacity, payload_len,
+                                response_len, false);
+  }
+
+  case MB_FUNC_WRITE_MULTIPLE_COILS: {
+    uint8_t byte_count;
+    uint16_t expected_byte_count;
+    uint32_t expected_len;
+
+    if (len < 10U) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    address = mb_get_u16_be(&data[2]);
+    quantity = mb_get_u16_be(&data[4]);
+    byte_count = data[6];
+    expected_len = 9UL + (uint32_t)byte_count;
+    if (expected_len != len) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    expected_byte_count = (uint16_t)((quantity + 7U) / 8U);
+    if (quantity == 0U || quantity > MB_TINY_MAX_WRITE_BITS ||
+        byte_count != expected_byte_count) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_VALUE,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (slave->coils.data == NULL ||
+        !mb_range_contains(slave->coils.start_addr, slave->coils.count, address,
+                           quantity)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_ADDR,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (!broadcast && response_capacity < 8U) {
+      slave->error_count++;
+      return MB_TINY_BUFFER_TOO_SMALL;
+    }
+
+    for (i = 0U; i < quantity; i++) {
+      bool value;
+      value = (data[7U + i / 8U] & (uint8_t)(1U << (i % 8U))) != 0U;
+      mb_coil_set(&slave->coils, (uint16_t)(address + i), value);
+    }
+    if (!broadcast) {
+      response[0] = slave->slave_id;
+      response[1] = function;
+      memcpy(&response[2], &data[2], 4U);
+    }
+    return mb_tiny_slave_finish(slave, response, response_capacity, 6U,
+                                response_len, broadcast);
+  }
+
+  case MB_FUNC_WRITE_SINGLE_COIL: {
+    uint16_t value;
+
+    if (len != 8U) {
+      slave->error_count++;
+      return MB_TINY_FRAME_ERROR;
+    }
+    address = mb_get_u16_be(&data[2]);
+    value = mb_get_u16_be(&data[4]);
+    if (value != 0xFF00U && value != 0x0000U) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_VALUE,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (slave->coils.data == NULL ||
+        !mb_range_contains(slave->coils.start_addr, slave->coils.count, address,
+                           1U)) {
+      return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_DATA_ADDR,
+                                     broadcast, response, response_capacity,
+                                     response_len);
+    }
+    if (!broadcast && response_capacity < 8U) {
+      slave->error_count++;
+      return MB_TINY_BUFFER_TOO_SMALL;
+    }
+
+    mb_coil_set(&slave->coils, address, value == 0xFF00U);
+    if (!broadcast) {
+      memcpy(response, data, 6U);
+    }
+    return mb_tiny_slave_finish(slave, response, response_capacity, 6U,
+                                response_len, broadcast);
+  }
+
+  default:
+    return mb_tiny_slave_exception(slave, function, MB_ERR_ILLEGAL_FUNC,
+                                   broadcast, response, response_capacity,
+                                   response_len);
+  }
+}
+
+int mb_tiny_slave_handle(mb_tiny_slave_t *slave, const uint8_t *data,
+                         uint16_t len) {
+  uint16_t response_len;
+  int ret;
+
+  if (slave == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_slave_process(slave, data, len, slave->rx_buf,
+                              MB_TINY_MAX_ADU_SIZE, &response_len);
+  if (ret == MB_TINY_IGNORED || ret == MB_TINY_NO_RESPONSE) {
     return MB_TINY_OK;
+  }
+  if (ret != MB_TINY_OK && ret != MB_TINY_EXCEPTION) {
+    return ret;
+  }
+  if (mb_tiny_slave_send(slave, slave->rx_buf, response_len) != MB_TINY_OK) {
+    slave->error_count++;
+    return MB_TINY_IO_ERROR;
+  }
+  return ret;
 }
 
-void mb_tiny_slave_set_send(mb_tiny_slave_t *slave, mb_tiny_send_cb_t send_cb)
-{
-    if (slave) {
-        g_slave_send_cb = send_cb;
-    }
+/* ==================== Master implementation ==================== */
+
+int mb_tiny_master_init(mb_tiny_master_t *master) {
+  if (master == NULL) {
+    return MB_TINY_INVALID_PARAM;
+  }
+
+  memset(master, 0, sizeof(*master));
+  master->timeout_ms = MB_TINY_TIMEOUT_MS;
+  master->initialized = true;
+  return MB_TINY_OK;
 }
 
-static void mb_tiny_slave_send(mb_tiny_slave_t *slave, const uint8_t *data, uint16_t len)
-{
-    if (g_slave_send_cb) {
-        g_slave_send_cb(data, len);
-    }
-    (void)slave;
+void mb_tiny_master_set_uart(mb_tiny_master_t *master,
+                             mb_tiny_send_cb_t send_cb,
+                             mb_tiny_recv_cb_t recv_cb) {
+  if (master != NULL) {
+    master->send_cb = send_cb;
+    master->recv_cb = recv_cb;
+  }
 }
 
-static void mb_tiny_slave_send_error(mb_tiny_slave_t *slave, uint8_t func, uint8_t err)
-{
-    uint8_t tx[5];
-    tx[0] = slave->slave_id;
-    tx[1] = func | 0x80;
-    tx[2] = err;
-    uint16_t crc = mb_tiny_crc16(tx, 3);
-    tx[3] = crc & 0xFF;
-    tx[4] = (crc >> 8) & 0xFF;
-    mb_tiny_slave_send(slave, tx, 5);
+void mb_tiny_master_set_timeout(mb_tiny_master_t *master, uint32_t timeout_ms) {
+  if (master != NULL && timeout_ms != 0U) {
+    master->timeout_ms = timeout_ms;
+  }
 }
 
-/**
- * @brief 检查地址是否在寄存器范围内
- */
-static int mb_tiny_check_addr(uint16_t addr, uint16_t start, uint16_t count)
-{
-    if (addr < start || addr >= start + count) {
-        return MB_ERR_ILLEGAL_DATA_ADDR;
-    }
-    return 0;
+static int mb_tiny_master_send(mb_tiny_master_t *master, uint16_t len) {
+  int ret;
+
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  if (master->send_cb == NULL) {
+    return MB_TINY_IO_ERROR;
+  }
+
+  ret = master->send_cb(master->tx_buf, len);
+  return ret == (int)len ? MB_TINY_OK : MB_TINY_IO_ERROR;
 }
 
-int mb_tiny_slave_handle(mb_tiny_slave_t *slave, const uint8_t *data, uint16_t len)
-{
-    uint8_t slave_id, func;
-    uint16_t crc_rx, crc_calc;
-    uint8_t tx_buf[MB_TINY_MAX_ADU_SIZE];
-    int error = 0;
-    
-    if (!slave || !data || len < 5) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    /* 验证 CRC */
-    crc_rx = ((uint16_t)data[len - 1] << 8) | data[len - 2];
-    crc_calc = mb_tiny_crc16(data, len - 2);
-    if (crc_rx != crc_calc) {
-        slave->error_count++;
-        return MB_TINY_CRC_ERROR;
-    }
-    
-    /* 解析帧头 */
-    slave_id = data[0];
-    func = data[1];
-    
-    /* 检查从站 ID */
-    if (slave_id != slave->slave_id) {
-        return MB_TINY_OK; /* 不是给我的 */
-    }
-    
-    /* 处理功能码 */
-    switch (func) {
-        /* 0x03: 读保持寄存器 */
-        case MB_FUNC_READ_HOLDING: {
-            uint16_t addr = ((uint16_t)data[2] << 8) | data[3];
-            uint16_t count = ((uint16_t)data[4] << 8) | data[5];
-            
-            /* 检查参数 */
-            if (count == 0 || count > 125) {
-                error = MB_ERR_ILLEGAL_DATA_VALUE;
-                break;
-            }
-            
-            /* 检查地址范围 */
-            error = mb_tiny_check_addr(addr, slave->holding.start_addr, 
-                                        slave->holding.count);
-            if (error != 0) break;
-            if (addr + count > slave->holding.start_addr + slave->holding.count) {
-                error = MB_ERR_ILLEGAL_DATA_ADDR;
-                break;
-            }
-            
-            /* 构建响应 */
-            tx_buf[0] = slave->slave_id;
-            tx_buf[1] = func;
-            tx_buf[2] = count * 2; /* 字节数 */
-            
-            /* 复制寄存器数据 (高字节先) */
-            uint16_t *reg = &slave->holding.data[addr - slave->holding.start_addr];
-            for (uint16_t i = 0; i < count; i++) {
-                tx_buf[3 + i * 2] = (reg[i] >> 8) & 0xFF;
-                tx_buf[4 + i * 2] = reg[i] & 0xFF;
-            }
-            
-            /* CRC */
-            uint16_t tx_len = 3 + count * 2;
-            crc_calc = mb_tiny_crc16(tx_buf, tx_len);
-            tx_buf[tx_len] = crc_calc & 0xFF;
-            tx_buf[tx_len + 1] = (crc_calc >> 8) & 0xFF;
-            
-            mb_tiny_slave_send(slave, tx_buf, tx_len + 2);
-            break;
-        }
-        
-        /* 0x06: 写单个寄存器 */
-        case MB_FUNC_WRITE_SINGLE_REG: {
-            uint16_t addr = ((uint16_t)data[2] << 8) | data[3];
-            uint16_t value = ((uint16_t)data[4] << 8) | data[5];
-            
-            /* 检查地址范围 */
-            error = mb_tiny_check_addr(addr, slave->holding.start_addr,
-                                        slave->holding.count);
-            if (error != 0) break;
-            
-            /* 写入寄存器 */
-            slave->holding.data[addr - slave->holding.start_addr] = value;
-            
-            /* 响应 (回显) */
-            memcpy(tx_buf, data, 6);
-            crc_calc = mb_tiny_crc16(tx_buf, 6);
-            tx_buf[6] = crc_calc & 0xFF;
-            tx_buf[7] = (crc_calc >> 8) & 0xFF;
-            
-            mb_tiny_slave_send(slave, tx_buf, 8);
-            break;
-        }
-        
-        /* 0x10: 写多个寄存器 */
-        case MB_FUNC_WRITE_MULTIPLE_REGS: {
-            uint16_t addr = ((uint16_t)data[2] << 8) | data[3];
-            uint16_t count = ((uint16_t)data[4] << 8) | data[5];
-            uint8_t byte_count = data[6];
-            
-            /* 检查参数 */
-            if (byte_count != count * 2) {
-                error = MB_ERR_ILLEGAL_DATA_VALUE;
-                break;
-            }
-            
-            /* 检查地址范围 */
-            error = mb_tiny_check_addr(addr, slave->holding.start_addr,
-                                        slave->holding.count);
-            if (error != 0) break;
-            if (addr + count > slave->holding.start_addr + slave->holding.count) {
-                error = MB_ERR_ILLEGAL_DATA_ADDR;
-                break;
-            }
-            
-            /* 写入寄存器 */
-            uint16_t *reg = &slave->holding.data[addr - slave->holding.start_addr];
-            for (uint16_t i = 0; i < count; i++) {
-                reg[i] = ((uint16_t)data[7 + i * 2] << 8) | data[8 + i * 2];
-            }
-            
-            /* 响应 */
-            tx_buf[0] = slave->slave_id;
-            tx_buf[1] = func;
-            tx_buf[2] = (addr >> 8) & 0xFF;
-            tx_buf[3] = addr & 0xFF;
-            tx_buf[4] = (count >> 8) & 0xFF;
-            tx_buf[5] = count & 0xFF;
-            
-            crc_calc = mb_tiny_crc16(tx_buf, 6);
-            tx_buf[6] = crc_calc & 0xFF;
-            tx_buf[7] = (crc_calc >> 8) & 0xFF;
-            
-            mb_tiny_slave_send(slave, tx_buf, 8);
-            break;
-        }
-        
-        /* 0x01: 读线圈 */
-        case MB_FUNC_READ_COILS: {
-            uint16_t addr = ((uint16_t)data[2] << 8) | data[3];
-            uint16_t count = ((uint16_t)data[4] << 8) | data[5];
-            
-            if (count == 0 || count > 2000) {
-                error = MB_ERR_ILLEGAL_DATA_VALUE;
-                break;
-            }
-            
-            error = mb_tiny_check_addr(addr, slave->coils.start_addr,
-                                        slave->coils.count);
-            if (error != 0) break;
-            
-            /* 构建响应 */
-            tx_buf[0] = slave->slave_id;
-            tx_buf[1] = func;
-            tx_buf[2] = (count + 7) / 8; /* 字节数 */
-            
-            /* 复制线圈数据 */
-            uint8_t *coil = &slave->coils.data[addr - slave->coils.start_addr];
-            for (uint16_t i = 0; i < count; i++) {
-                if (coil[i / 8] & (1 << (i % 8))) {
-                    tx_buf[3 + i / 8] |= (1 << (i % 8));
-                }
-            }
-            
-            uint16_t tx_len = 3 + tx_buf[2];
-            crc_calc = mb_tiny_crc16(tx_buf, tx_len);
-            tx_buf[tx_len] = crc_calc & 0xFF;
-            tx_buf[tx_len + 1] = (crc_calc >> 8) & 0xFF;
-            
-            mb_tiny_slave_send(slave, tx_buf, tx_len + 2);
-            break;
-        }
-        
-        /* 0x05: 写单个线圈 */
-        case MB_FUNC_WRITE_SINGLE_COIL: {
-            uint16_t addr = ((uint16_t)data[2] << 8) | data[3];
-            uint16_t value = ((uint16_t)data[4] << 8) | data[5];
-            
-            error = mb_tiny_check_addr(addr, slave->coils.start_addr,
-                                        slave->coils.count);
-            if (error != 0) break;
-            
-            /* 写入线圈 (0xFF00 = ON, 0x0000 = OFF) */
-            uint8_t *coil = &slave->coils.data[addr - slave->coils.start_addr];
-            if (value == 0xFF00) {
-                *coil |= (1 << (addr % 8));
-            } else {
-                *coil &= ~(1 << (addr % 8));
-            }
-            
-            /* 响应 (回显) */
-            memcpy(tx_buf, data, 6);
-            crc_calc = mb_tiny_crc16(tx_buf, 6);
-            tx_buf[6] = crc_calc & 0xFF;
-            tx_buf[7] = (crc_calc >> 8) & 0xFF;
-            
-            mb_tiny_slave_send(slave, tx_buf, 8);
-            break;
-        }
-        
-        default:
-            error = MB_ERR_ILLEGAL_FUNC;
-            break;
-    }
-    
-    if (error != 0) {
-        mb_tiny_slave_send_error(slave, func, (uint8_t)error);
-        slave->error_count++;
-    } else {
-        slave->request_count++;
-    }
-    
-    return MB_TINY_OK;
+static int mb_tiny_master_receive(mb_tiny_master_t *master) {
+  int ret;
+
+  if (master->recv_cb == NULL) {
+    return MB_TINY_IO_ERROR;
+  }
+
+  ret =
+      master->recv_cb(master->rx_buf, MB_TINY_MAX_ADU_SIZE, master->timeout_ms);
+  if (ret == 0) {
+    return MB_TINY_TIMEOUT;
+  }
+  if (ret < 0) {
+    return MB_TINY_IO_ERROR;
+  }
+  if (ret > (int)MB_TINY_MAX_ADU_SIZE || ret < (int)MB_TINY_MIN_ADU_SIZE) {
+    return MB_TINY_FRAME_ERROR;
+  }
+
+  master->rx_len = (uint16_t)ret;
+  if (!mb_frame_crc_is_valid(master->rx_buf, master->rx_len)) {
+    return MB_TINY_CRC_ERROR;
+  }
+  return MB_TINY_OK;
 }
 
-/* ==================== 主站实现 ==================== */
-
-static mb_tiny_send_cb_t g_master_send_cb = NULL;
-static mb_tiny_recv_cb_t g_master_recv_cb = NULL;
-
-int mb_tiny_master_init(mb_tiny_master_t *master)
-{
-    if (!master) {
-        return MB_TINY_INVALID_PARAM;
+static int mb_tiny_master_validate_header(mb_tiny_master_t *master,
+                                          uint8_t slave_id, uint8_t function) {
+  if (master->rx_buf[0] != slave_id) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  if (master->rx_buf[1] == (uint8_t)(function | 0x80U)) {
+    if (master->rx_len != 5U) {
+      return MB_TINY_FRAME_ERROR;
     }
-    
-    memset(master, 0, sizeof(*master));
-    master->timeout_ms = MB_TINY_TIMEOUT_MS;
-    master->initialized = true;
-    
-    return MB_TINY_OK;
+    master->last_exception = master->rx_buf[2];
+    return MB_TINY_EXCEPTION;
+  }
+  if (master->rx_buf[1] != function) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  return MB_TINY_OK;
 }
 
-void mb_tiny_master_set_uart(mb_tiny_master_t *master, 
-                              mb_tiny_send_cb_t send_cb, 
-                              mb_tiny_recv_cb_t recv_cb)
-{
-    if (master) {
-        g_master_send_cb = send_cb;
-        g_master_recv_cb = recv_cb;
-    }
+static int mb_tiny_master_exchange(mb_tiny_master_t *master, uint16_t tx_len,
+                                   uint8_t slave_id, uint8_t function) {
+  int ret;
+
+  master->slave_id = slave_id;
+  master->tx_len = tx_len;
+  master->rx_len = 0U;
+  master->last_exception = 0U;
+
+  ret = mb_tiny_master_send(master, tx_len);
+  if (ret != MB_TINY_OK) {
+    master->error_count++;
+    return ret;
+  }
+  ret = mb_tiny_master_receive(master);
+  if (ret != MB_TINY_OK) {
+    master->error_count++;
+    return ret;
+  }
+  ret = mb_tiny_master_validate_header(master, slave_id, function);
+  if (ret != MB_TINY_OK) {
+    master->error_count++;
+  }
+  return ret;
 }
 
-void mb_tiny_master_set_timeout(mb_tiny_master_t *master, uint32_t timeout_ms)
-{
-    if (master) {
-        master->timeout_ms = timeout_ms;
-    }
+static int mb_tiny_master_validate_args(mb_tiny_master_t *master,
+                                        uint8_t slave_id) {
+  if (master == NULL || !mb_unit_id_is_valid(slave_id)) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  if (!master->initialized) {
+    return MB_TINY_NOT_INITIALIZED;
+  }
+  return MB_TINY_OK;
 }
 
-static int mb_tiny_master_tx(mb_tiny_master_t *master, uint8_t *data, uint16_t len)
-{
-    if (g_master_send_cb) {
-        return g_master_send_cb(data, len);
-    }
-    (void)master;
-    return MB_TINY_ERROR;
+static void mb_tiny_master_build_fixed_request(mb_tiny_master_t *master,
+                                               uint8_t slave_id,
+                                               uint8_t function,
+                                               uint16_t address,
+                                               uint16_t value) {
+  master->tx_buf[0] = slave_id;
+  master->tx_buf[1] = function;
+  mb_put_u16_be(&master->tx_buf[2], address);
+  mb_put_u16_be(&master->tx_buf[4], value);
+  mb_append_crc(master->tx_buf, 6U);
 }
 
-static int mb_tiny_master_rx(mb_tiny_master_t *master, uint8_t *data, uint16_t len)
-{
-    if (g_master_recv_cb) {
-        return g_master_recv_cb(data, len, master->timeout_ms);
-    }
-    return MB_TINY_ERROR;
+static int mb_tiny_master_read_registers(mb_tiny_master_t *master,
+                                         uint8_t slave_id, uint8_t function,
+                                         uint16_t addr, uint16_t count,
+                                         uint16_t *data) {
+  uint16_t expected_len;
+  uint16_t i;
+  int ret;
+
+  if (data == NULL || count == 0U || count > MB_TINY_MAX_READ_REGS) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_master_validate_args(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  mb_tiny_master_build_fixed_request(master, slave_id, function, addr, count);
+  ret = mb_tiny_master_exchange(master, 8U, slave_id, function);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  expected_len = (uint16_t)(5U + count * 2U);
+  if (master->rx_len != expected_len ||
+      master->rx_buf[2] != (uint8_t)(count * 2U)) {
+    master->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+  for (i = 0U; i < count; i++) {
+    data[i] = mb_get_u16_be(&master->rx_buf[3U + i * 2U]);
+  }
+
+  master->request_count++;
+  return MB_TINY_OK;
 }
 
 int mb_tiny_master_read_holding(mb_tiny_master_t *master, uint8_t slave_id,
-                                 uint16_t addr, uint16_t count, uint16_t *data)
-{
-    uint8_t tx[8];
-    uint8_t rx[MB_TINY_MAX_ADU_SIZE];
-    int ret;
-    
-    if (!master || !data || count == 0 || count > 125) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    /* 构建请求帧 */
-    tx[0] = slave_id;
-    tx[1] = MB_FUNC_READ_HOLDING;
-    tx[2] = (addr >> 8) & 0xFF;
-    tx[3] = addr & 0xFF;
-    tx[4] = (count >> 8) & 0xFF;
-    tx[5] = count & 0xFF;
-    
-    uint16_t crc = mb_tiny_crc16(tx, 6);
-    tx[6] = crc & 0xFF;
-    tx[7] = (crc >> 8) & 0xFF;
-    
-    /* 发送 */
-    ret = mb_tiny_master_tx(master, tx, 8);
-    if (ret < 0) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 接收 */
-    ret = mb_tiny_master_rx(master, rx, MB_TINY_MAX_ADU_SIZE);
-    if (ret < 5) {
-        master->error_count++;
-        return MB_TINY_TIMEOUT;
-    }
-    
-    /* 验证 CRC */
-    crc = ((uint16_t)rx[ret - 1] << 8) | rx[ret - 2];
-    if (crc != mb_tiny_crc16(rx, ret - 2)) {
-        master->error_count++;
-        return MB_TINY_CRC_ERROR;
-    }
-    
-    /* 检查功能码 */
-    if (rx[1] & 0x80) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 复制数据 */
-    uint8_t byte_count = rx[2];
-    for (uint8_t i = 0; i < byte_count / 2; i++) {
-        data[i] = ((uint16_t)rx[3 + i * 2] << 8) | rx[4 + i * 2];
-    }
-    
-    master->request_count++;
-    return MB_TINY_OK;
+                                uint16_t addr, uint16_t count, uint16_t *data) {
+  return mb_tiny_master_read_registers(master, slave_id, MB_FUNC_READ_HOLDING,
+                                       addr, count, data);
+}
+
+int mb_tiny_master_read_input(mb_tiny_master_t *master, uint8_t slave_id,
+                              uint16_t addr, uint16_t count, uint16_t *data) {
+  return mb_tiny_master_read_registers(master, slave_id, MB_FUNC_READ_INPUT,
+                                       addr, count, data);
 }
 
 int mb_tiny_master_write_reg(mb_tiny_master_t *master, uint8_t slave_id,
-                               uint16_t addr, uint16_t value)
-{
-    uint8_t tx[8];
-    uint8_t rx[8];
-    int ret;
-    
-    if (!master) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    /* 构建请求帧 */
-    tx[0] = slave_id;
-    tx[1] = MB_FUNC_WRITE_SINGLE_REG;
-    tx[2] = (addr >> 8) & 0xFF;
-    tx[3] = addr & 0xFF;
-    tx[4] = (value >> 8) & 0xFF;
-    tx[5] = value & 0xFF;
-    
-    uint16_t crc = mb_tiny_crc16(tx, 6);
-    tx[6] = crc & 0xFF;
-    tx[7] = (crc >> 8) & 0xFF;
-    
-    /* 发送 */
-    ret = mb_tiny_master_tx(master, tx, 8);
-    if (ret < 0) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 接收 */
-    ret = mb_tiny_master_rx(master, rx, 8);
-    if (ret < 5) {
-        master->error_count++;
-        return MB_TINY_TIMEOUT;
-    }
-    
-    /* 验证 CRC */
-    crc = ((uint16_t)rx[ret - 1] << 8) | rx[ret - 2];
-    if (crc != mb_tiny_crc16(rx, ret - 2)) {
-        master->error_count++;
-        return MB_TINY_CRC_ERROR;
-    }
-    
-    if (rx[1] & 0x80) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    master->request_count++;
-    return MB_TINY_OK;
+                             uint16_t addr, uint16_t value) {
+  int ret;
+
+  ret = mb_tiny_master_validate_args(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  mb_tiny_master_build_fixed_request(master, slave_id, MB_FUNC_WRITE_SINGLE_REG,
+                                     addr, value);
+  ret = mb_tiny_master_exchange(master, 8U, slave_id, MB_FUNC_WRITE_SINGLE_REG);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  if (master->rx_len != 8U || memcmp(master->rx_buf, master->tx_buf, 6U) != 0) {
+    master->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+
+  master->request_count++;
+  return MB_TINY_OK;
 }
 
 int mb_tiny_master_write_regs(mb_tiny_master_t *master, uint8_t slave_id,
-                                uint16_t addr, uint16_t count, const uint16_t *data)
-{
-    uint8_t tx[MB_TINY_MAX_ADU_SIZE];
-    uint8_t rx[8];
-    int ret;
-    uint16_t i;
-    
-    if (!master || !data || count == 0 || count > 123) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    /* 构建请求帧 */
-    tx[0] = slave_id;
-    tx[1] = MB_FUNC_WRITE_MULTIPLE_REGS;
-    tx[2] = (addr >> 8) & 0xFF;
-    tx[3] = addr & 0xFF;
-    tx[4] = (count >> 8) & 0xFF;
-    tx[5] = count & 0xFF;
-    tx[6] = count * 2; /* 字节数 */
-    
-    for (i = 0; i < count; i++) {
-        tx[7 + i * 2] = (data[i] >> 8) & 0xFF;
-        tx[8 + i * 2] = data[i] & 0xFF;
-    }
-    
-    uint16_t tx_len = 7 + count * 2;
-    uint16_t crc = mb_tiny_crc16(tx, tx_len);
-    tx[tx_len] = crc & 0xFF;
-    tx[tx_len + 1] = (crc >> 8) & 0xFF;
-    
-    /* 发送 */
-    ret = mb_tiny_master_tx(master, tx, tx_len + 2);
-    if (ret < 0) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 接收 */
-    ret = mb_tiny_master_rx(master, rx, 8);
-    if (ret < 5) {
-        master->error_count++;
-        return MB_TINY_TIMEOUT;
-    }
-    
-    /* 验证 CRC */
-    crc = ((uint16_t)rx[ret - 1] << 8) | rx[ret - 2];
-    if (crc != mb_tiny_crc16(rx, ret - 2)) {
-        master->error_count++;
-        return MB_TINY_CRC_ERROR;
-    }
-    
-    if (rx[1] & 0x80) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    master->request_count++;
-    return MB_TINY_OK;
+                              uint16_t addr, uint16_t count,
+                              const uint16_t *data) {
+  uint16_t tx_len;
+  uint16_t i;
+  int ret;
+
+  if (data == NULL || count == 0U || count > MB_TINY_MAX_WRITE_REGS) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_master_validate_args(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  master->tx_buf[0] = slave_id;
+  master->tx_buf[1] = MB_FUNC_WRITE_MULTIPLE_REGS;
+  mb_put_u16_be(&master->tx_buf[2], addr);
+  mb_put_u16_be(&master->tx_buf[4], count);
+  master->tx_buf[6] = (uint8_t)(count * 2U);
+  for (i = 0U; i < count; i++) {
+    mb_put_u16_be(&master->tx_buf[7U + i * 2U], data[i]);
+  }
+  tx_len = mb_append_crc(master->tx_buf, (uint16_t)(7U + count * 2U));
+
+  ret = mb_tiny_master_exchange(master, tx_len, slave_id,
+                                MB_FUNC_WRITE_MULTIPLE_REGS);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  if (master->rx_len != 8U ||
+      memcmp(&master->rx_buf[2], &master->tx_buf[2], 4U) != 0) {
+    master->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+
+  master->request_count++;
+  return MB_TINY_OK;
+}
+
+static int mb_tiny_master_read_bits(mb_tiny_master_t *master, uint8_t slave_id,
+                                    uint8_t function, uint16_t addr,
+                                    uint16_t count, uint8_t *data) {
+  uint16_t byte_count;
+  uint16_t expected_len;
+  int ret;
+
+  if (data == NULL || count == 0U || count > MB_TINY_MAX_READ_BITS) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_master_validate_args(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  mb_tiny_master_build_fixed_request(master, slave_id, function, addr, count);
+  ret = mb_tiny_master_exchange(master, 8U, slave_id, function);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  byte_count = (uint16_t)((count + 7U) / 8U);
+  expected_len = (uint16_t)(5U + byte_count);
+  if (master->rx_len != expected_len ||
+      master->rx_buf[2] != (uint8_t)byte_count) {
+    master->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+  memcpy(data, &master->rx_buf[3], byte_count);
+  if ((count % 8U) != 0U) {
+    data[byte_count - 1U] &= (uint8_t)((1U << (count % 8U)) - 1U);
+  }
+
+  master->request_count++;
+  return MB_TINY_OK;
 }
 
 int mb_tiny_master_read_coils(mb_tiny_master_t *master, uint8_t slave_id,
-                                uint16_t addr, uint16_t count, uint8_t *data)
-{
-    uint8_t tx[8];
-    uint8_t rx[MB_TINY_MAX_ADU_SIZE];
-    int ret;
-    
-    if (!master || !data || count == 0 || count > 2000) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    /* 构建请求帧 */
-    tx[0] = slave_id;
-    tx[1] = MB_FUNC_READ_COILS;
-    tx[2] = (addr >> 8) & 0xFF;
-    tx[3] = addr & 0xFF;
-    tx[4] = (count >> 8) & 0xFF;
-    tx[5] = count & 0xFF;
-    
-    uint16_t crc = mb_tiny_crc16(tx, 6);
-    tx[6] = crc & 0xFF;
-    tx[7] = (crc >> 8) & 0xFF;
-    
-    /* 发送 */
-    ret = mb_tiny_master_tx(master, tx, 8);
-    if (ret < 0) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 接收 */
-    ret = mb_tiny_master_rx(master, rx, MB_TINY_MAX_ADU_SIZE);
-    if (ret < 5) {
-        master->error_count++;
-        return MB_TINY_TIMEOUT;
-    }
-    
-    /* 验证 CRC */
-    crc = ((uint16_t)rx[ret - 1] << 8) | rx[ret - 2];
-    if (crc != mb_tiny_crc16(rx, ret - 2)) {
-        master->error_count++;
-        return MB_TINY_CRC_ERROR;
-    }
-    
-    if (rx[1] & 0x80) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 复制数据 */
-    uint8_t byte_count = rx[2];
-    memcpy(data, &rx[3], byte_count);
-    
-    master->request_count++;
-    return MB_TINY_OK;
+                              uint16_t addr, uint16_t count, uint8_t *data) {
+  return mb_tiny_master_read_bits(master, slave_id, MB_FUNC_READ_COILS, addr,
+                                  count, data);
+}
+
+int mb_tiny_master_read_discrete(mb_tiny_master_t *master, uint8_t slave_id,
+                                 uint16_t addr, uint16_t count, uint8_t *data) {
+  return mb_tiny_master_read_bits(master, slave_id, MB_FUNC_READ_DISCRETE, addr,
+                                  count, data);
+}
+
+int mb_tiny_master_write_coils(mb_tiny_master_t *master, uint8_t slave_id,
+                               uint16_t addr, uint16_t count,
+                               const uint8_t *data) {
+  uint16_t byte_count;
+  uint16_t tx_len;
+  int ret;
+
+  if (data == NULL || count == 0U || count > MB_TINY_MAX_WRITE_BITS) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_master_validate_args(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  byte_count = (uint16_t)((count + 7U) / 8U);
+  master->tx_buf[0] = slave_id;
+  master->tx_buf[1] = MB_FUNC_WRITE_MULTIPLE_COILS;
+  mb_put_u16_be(&master->tx_buf[2], addr);
+  mb_put_u16_be(&master->tx_buf[4], count);
+  master->tx_buf[6] = (uint8_t)byte_count;
+  memcpy(&master->tx_buf[7], data, byte_count);
+  if ((count % 8U) != 0U) {
+    master->tx_buf[7U + byte_count - 1U] &=
+        (uint8_t)((1U << (count % 8U)) - 1U);
+  }
+  tx_len = mb_append_crc(master->tx_buf, (uint16_t)(7U + byte_count));
+
+  ret = mb_tiny_master_exchange(master, tx_len, slave_id,
+                                MB_FUNC_WRITE_MULTIPLE_COILS);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  if (master->rx_len != 8U ||
+      memcmp(&master->rx_buf[2], &master->tx_buf[2], 4U) != 0) {
+    master->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+
+  master->request_count++;
+  return MB_TINY_OK;
 }
 
 int mb_tiny_master_write_coil(mb_tiny_master_t *master, uint8_t slave_id,
-                               uint16_t addr, uint16_t value)
-{
-    uint8_t tx[8];
-    uint8_t rx[8];
-    int ret;
-    
-    if (!master) {
-        return MB_TINY_INVALID_PARAM;
-    }
-    
-    /* 构建请求帧: 0xFF00 = ON, 0x0000 = OFF */
-    tx[0] = slave_id;
-    tx[1] = MB_FUNC_WRITE_SINGLE_COIL;
-    tx[2] = (addr >> 8) & 0xFF;
-    tx[3] = addr & 0xFF;
-    tx[4] = (value != 0) ? 0xFF : 0x00;
-    tx[5] = 0x00;
-    
-    uint16_t crc = mb_tiny_crc16(tx, 6);
-    tx[6] = crc & 0xFF;
-    tx[7] = (crc >> 8) & 0xFF;
-    
-    /* 发送 */
-    ret = mb_tiny_master_tx(master, tx, 8);
-    if (ret < 0) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    /* 接收 */
-    ret = mb_tiny_master_rx(master, rx, 8);
-    if (ret < 5) {
-        master->error_count++;
-        return MB_TINY_TIMEOUT;
-    }
-    
-    /* 验证 CRC */
-    crc = ((uint16_t)rx[ret - 1] << 8) | rx[ret - 2];
-    if (crc != mb_tiny_crc16(rx, ret - 2)) {
-        master->error_count++;
-        return MB_TINY_CRC_ERROR;
-    }
-    
-    if (rx[1] & 0x80) {
-        master->error_count++;
-        return MB_TINY_ERROR;
-    }
-    
-    master->request_count++;
-    return MB_TINY_OK;
+                              uint16_t addr, uint16_t value) {
+  int ret;
+
+  if (value != 0x0000U && value != 0xFF00U) {
+    return MB_TINY_INVALID_PARAM;
+  }
+  ret = mb_tiny_master_validate_args(master, slave_id);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+
+  mb_tiny_master_build_fixed_request(master, slave_id,
+                                     MB_FUNC_WRITE_SINGLE_COIL, addr, value);
+  ret =
+      mb_tiny_master_exchange(master, 8U, slave_id, MB_FUNC_WRITE_SINGLE_COIL);
+  if (ret != MB_TINY_OK) {
+    return ret;
+  }
+  if (master->rx_len != 8U || memcmp(master->rx_buf, master->tx_buf, 6U) != 0) {
+    master->error_count++;
+    return MB_TINY_FRAME_ERROR;
+  }
+
+  master->request_count++;
+  return MB_TINY_OK;
 }
