@@ -135,11 +135,13 @@ typedef struct {
 typedef struct {
   uint8_t data[MB_TINY_MAX_ADU_SIZE];
   uint16_t len;
+  uint16_t inter_char_gap_ms;
   uint16_t frame_gap_ms;
   uint32_t last_byte_ms;
   uint32_t dropped_frames;
   bool receiving;
   bool overflow;
+  bool invalid;
 } mb_tiny_rtu_rx_t;
 
 typedef struct {
@@ -226,10 +228,25 @@ typedef struct {
 uint16_t mb_tiny_rtu_frame_gap_ms(uint32_t baud_rate, uint8_t bits_per_char);
 
 /**
- * Initialize a main-loop RTU receiver. frame_gap_ms is the rounded-up t3.5
- * silence interval and must be nonzero.
+ * Return a conservative whole-millisecond t1.5 violation threshold. Returns
+ * zero above 19200 baud because a millisecond timestamp cannot reliably
+ * distinguish the fixed 750 us t1.5 and 1750 us t3.5 intervals.
+ */
+uint16_t mb_tiny_rtu_inter_char_gap_ms(uint32_t baud_rate,
+                                       uint8_t bits_per_char);
+
+/**
+ * Initialize a main-loop RTU receiver with t3.5 separation only. This
+ * compatibility entry point leaves t1.5 validation disabled.
  */
 int mb_tiny_rtu_rx_init(mb_tiny_rtu_rx_t *rx, uint16_t frame_gap_ms);
+
+/**
+ * Initialize strict RTU framing with t1.5 and t3.5 silence intervals.
+ * inter_char_gap_ms may be zero to disable t1.5 validation.
+ */
+int mb_tiny_rtu_rx_init_ex(mb_tiny_rtu_rx_t *rx, uint16_t inter_char_gap_ms,
+                           uint16_t frame_gap_ms);
 
 /**
  * Feed one UART byte in main-loop context with its receive timestamp. The UART

@@ -110,30 +110,51 @@ static void mb_tiny_compiler_barrier(void) {
 #endif
 }
 
-uint16_t mb_tiny_rtu_frame_gap_ms(uint32_t baud_rate, uint8_t bits_per_char) {
+static uint16_t mb_tiny_rtu_gap_ms(uint32_t baud_rate, uint8_t bits_per_char,
+                                   uint16_t chars_x1000) {
   uint32_t numerator;
   uint32_t gap_ms;
 
   if (baud_rate == 0U || bits_per_char < 8U || bits_per_char > 12U) {
     return 0U;
   }
-  if (baud_rate > 19200UL) {
-    return 2U;
-  }
-
-  numerator = (uint32_t)bits_per_char * 3500UL;
+  numerator = (uint32_t)bits_per_char * chars_x1000;
   gap_ms = (numerator + baud_rate - 1U) / baud_rate;
   return gap_ms <= 0xFFFFUL ? (uint16_t)gap_ms : 0U;
 }
 
-int mb_tiny_rtu_rx_init(mb_tiny_rtu_rx_t *rx, uint16_t frame_gap_ms) {
-  if (rx == NULL || frame_gap_ms == 0U) {
+uint16_t mb_tiny_rtu_frame_gap_ms(uint32_t baud_rate, uint8_t bits_per_char) {
+  if (baud_rate > 19200UL) {
+    return bits_per_char >= 8U && bits_per_char <= 12U ? 2U : 0U;
+  }
+  return mb_tiny_rtu_gap_ms(baud_rate, bits_per_char, 3500U);
+}
+
+uint16_t mb_tiny_rtu_inter_char_gap_ms(uint32_t baud_rate,
+                                       uint8_t bits_per_char) {
+  uint16_t gap_ms;
+
+  if (baud_rate > 19200UL) {
+    return 0U;
+  }
+  gap_ms = mb_tiny_rtu_gap_ms(baud_rate, bits_per_char, 1500U);
+  return gap_ms != 0U && gap_ms < 0xFFFFU ? (uint16_t)(gap_ms + 1U) : 0U;
+}
+
+int mb_tiny_rtu_rx_init_ex(mb_tiny_rtu_rx_t *rx, uint16_t inter_char_gap_ms,
+                           uint16_t frame_gap_ms) {
+  if (rx == NULL || frame_gap_ms == 0U || inter_char_gap_ms >= frame_gap_ms) {
     return MB_TINY_INVALID_PARAM;
   }
 
   memset(rx, 0, sizeof(*rx));
+  rx->inter_char_gap_ms = inter_char_gap_ms;
   rx->frame_gap_ms = frame_gap_ms;
   return MB_TINY_OK;
+}
+
+int mb_tiny_rtu_rx_init(mb_tiny_rtu_rx_t *rx, uint16_t frame_gap_ms) {
+  return mb_tiny_rtu_rx_init_ex(rx, 0U, frame_gap_ms);
 }
 
 void mb_tiny_rtu_rx_reset(mb_tiny_rtu_rx_t *rx) {
@@ -141,6 +162,7 @@ void mb_tiny_rtu_rx_reset(mb_tiny_rtu_rx_t *rx) {
     rx->len = 0U;
     rx->receiving = false;
     rx->overflow = false;
+    rx->invalid = false;
   }
 }
 
@@ -149,21 +171,34 @@ bool mb_tiny_rtu_rx_is_idle(const mb_tiny_rtu_rx_t *rx) {
 }
 
 int mb_tiny_rtu_rx_feed(mb_tiny_rtu_rx_t *rx, uint8_t byte, uint32_t now_ms) {
+  uint32_t silence_ms;
   bool missed_frame;
+  bool inter_char_error;
 
   if (rx == NULL || rx->frame_gap_ms == 0U) {
     return MB_TINY_INVALID_PARAM;
   }
 
-  missed_frame = rx->receiving &&
-                 (uint32_t)(now_ms - rx->last_byte_ms) >= rx->frame_gap_ms;
+  silence_ms = (uint32_t)(now_ms - rx->last_byte_ms);
+  missed_frame = rx->receiving && silence_ms >= rx->frame_gap_ms;
+  inter_char_error = rx->receiving && !rx->invalid && !missed_frame &&
+                     rx->inter_char_gap_ms != 0U &&
+                     silence_ms >= rx->inter_char_gap_ms;
   if (missed_frame) {
     rx->dropped_frames++;
     mb_tiny_rtu_rx_reset(rx);
+  } else if (inter_char_error) {
+    rx->invalid = true;
   }
 
   rx->receiving = true;
   rx->last_byte_ms = now_ms;
+  if (inter_char_error) {
+    return MB_TINY_FRAME_ERROR;
+  }
+  if (rx->invalid) {
+    return MB_TINY_IGNORED;
+  }
   if (rx->overflow) {
     return MB_TINY_BUFFER_TOO_SMALL;
   }
@@ -190,6 +225,11 @@ int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
     rx->dropped_frames++;
     mb_tiny_rtu_rx_reset(rx);
     return MB_TINY_BUFFER_TOO_SMALL;
+  }
+  if (rx->invalid) {
+    rx->dropped_frames++;
+    mb_tiny_rtu_rx_reset(rx);
+    return MB_TINY_FRAME_ERROR;
   }
   if (rx->len < MB_TINY_MIN_ADU_SIZE) {
     rx->dropped_frames++;
@@ -323,10 +363,10 @@ int mb_tiny_rtu_rx_queue_process(mb_tiny_rtu_rx_queue_t *queue,
     }
 
     ret = mb_tiny_rtu_rx_feed(rx, slot.byte, slot.timestamp_ms);
-    if (ret != MB_TINY_OK) {
+    mb_tiny_rtu_rx_queue_consume(queue);
+    if (ret != MB_TINY_OK && ret != MB_TINY_IGNORED) {
       return ret;
     }
-    mb_tiny_rtu_rx_queue_consume(queue);
   }
 
   return mb_tiny_rtu_rx_poll(rx, now_ms, frame, frame_capacity, frame_len);

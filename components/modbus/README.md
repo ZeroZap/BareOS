@@ -26,8 +26,9 @@ callback.
 `mb_tiny_rtu_rx_t` provides poll-driven RTU frame separation. Feed timestamped
 UART bytes from the main loop with `mb_tiny_rtu_rx_feed()`, then call
 `mb_tiny_rtu_rx_poll()` to retrieve an ADU after the `t3.5` silence interval.
-`mb_tiny_rtu_frame_gap_ms()` calculates a conservative whole-millisecond gap
-without floating point.
+`mb_tiny_rtu_frame_gap_ms()` and `mb_tiny_rtu_inter_char_gap_ms()` calculate
+conservative whole-millisecond thresholds without floating point. Strict mode
+rejects frames containing a `t1.5` inter-character gap.
 
 `mb_tiny_rtu_rx_queue_t` is an optional ISR-to-main-loop SPSC adapter. Its
 storage is application-owned, so queue RAM can be selected for the UART baud
@@ -48,7 +49,17 @@ TX-complete restores receive direction, consumes a timestamped response from the
 RX queue, and validates CRC, unit ID, function code, and exception shape. Raw ADU
 transactions and function-specific start/result APIs are both available.
 
-The component does **not** validate `t1.5` mid-frame gaps.
+`mb_tiny_rtu_rx_init()` remains a compatibility entry point that only applies
+`t3.5` frame separation. Use `mb_tiny_rtu_rx_init_ex()` with both calculated
+thresholds to enable strict `t1.5` validation. A violating frame is discarded
+until a complete `t3.5` silence interval is observed, preventing its trailing
+bytes from being accepted as a new request.
+
+The shared millisecond time source cannot reliably distinguish Modbus's fixed
+750 us `t1.5` and 1750 us `t3.5` intervals above 19200 baud. Therefore
+`mb_tiny_rtu_inter_char_gap_ms()` returns zero at higher baud rates and strict
+`t1.5` checking remains disabled. Use a finer timestamp source in a future
+transport extension if sub-millisecond validation is required.
 
 The synchronous master receive callback can wait up to `timeout_ms`. Do not call
 these wrappers from BareOS's cooperative main loop when blocking would delay AT
@@ -70,8 +81,9 @@ static mb_tiny_rtu_rx_t rtu_rx;
 
 void modbus_init(void)
 {
-    uint16_t gap = mb_tiny_rtu_frame_gap_ms(9600U, 11U);
-    mb_tiny_rtu_rx_init(&rtu_rx, gap);
+    uint16_t t15 = mb_tiny_rtu_inter_char_gap_ms(9600U, 11U);
+    uint16_t t35 = mb_tiny_rtu_frame_gap_ms(9600U, 11U);
+    mb_tiny_rtu_rx_init_ex(&rtu_rx, t15, t35);
     mb_tiny_rtu_rx_queue_init(&rx_queue, rx_slots, 64U);
 }
 
@@ -327,5 +339,6 @@ sanitizers are optional rather than enabled by default.
 
 ## Remaining work
 
-The current eight-function-code scope is complete. Add more Modbus function
-codes only when required by a product integration.
+The current eight-function-code and millisecond RTU framing scope is complete.
+Add more Modbus function codes or a sub-millisecond timestamp transport only
+when required by a product integration.

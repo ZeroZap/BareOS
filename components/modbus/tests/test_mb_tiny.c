@@ -172,6 +172,70 @@ static void test_rtu_receive_framing(void) {
   CHECK_EQ(frame[3], 0x77U);
 }
 
+static void test_rtu_strict_inter_char_gap(void) {
+  mb_tiny_rtu_rx_queue_t queue;
+  mb_tiny_rtu_rx_slot_t slots[16];
+  mb_tiny_rtu_rx_t rx;
+  uint8_t frame[8];
+  uint16_t frame_len;
+
+  CHECK_EQ(mb_tiny_rtu_inter_char_gap_ms(0U, 11U), 0U);
+  CHECK_EQ(mb_tiny_rtu_inter_char_gap_ms(9600U, 7U), 0U);
+  CHECK_EQ(mb_tiny_rtu_inter_char_gap_ms(9600U, 11U), 3U);
+  CHECK_EQ(mb_tiny_rtu_inter_char_gap_ms(19200U, 11U), 2U);
+  CHECK_EQ(mb_tiny_rtu_inter_char_gap_ms(38400U, 11U), 0U);
+  CHECK_EQ(mb_tiny_rtu_rx_init_ex(NULL, 3U, 5U), MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_rx_init_ex(&rx, 5U, 5U), MB_TINY_INVALID_PARAM);
+  CHECK_EQ(mb_tiny_rtu_rx_init_ex(&rx, 3U, 5U), MB_TINY_OK);
+
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x10U, 10U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x11U, 11U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x12U, 14U), MB_TINY_FRAME_ERROR);
+  CHECK(rx.invalid);
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x13U, 15U), MB_TINY_IGNORED);
+  CHECK_EQ(mb_tiny_rtu_rx_poll(&rx, 19U, frame, sizeof(frame), &frame_len),
+           MB_TINY_IGNORED);
+  CHECK_EQ(mb_tiny_rtu_rx_poll(&rx, 20U, frame, sizeof(frame), &frame_len),
+           MB_TINY_FRAME_ERROR);
+  CHECK_EQ(rx.dropped_frames, 1U);
+  CHECK(mb_tiny_rtu_rx_is_idle(&rx));
+
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x20U, UINT32_MAX - 3U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x21U, UINT32_MAX - 2U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x22U, 1U), MB_TINY_FRAME_ERROR);
+  CHECK_EQ(mb_tiny_rtu_rx_feed(&rx, 0x23U, 2U), MB_TINY_IGNORED);
+  CHECK_EQ(mb_tiny_rtu_rx_poll(&rx, 7U, frame, sizeof(frame), &frame_len),
+           MB_TINY_FRAME_ERROR);
+  CHECK_EQ(rx.dropped_frames, 2U);
+
+  CHECK_EQ(mb_tiny_rtu_rx_queue_init(&queue, slots, 16U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_init_ex(&rx, 3U, 5U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x30U, 20U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x31U, 21U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x32U, 24U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x33U, 25U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x40U, 31U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x41U, 32U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x42U, 33U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_push_isr(&queue, 0x43U, 34U), MB_TINY_OK);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_process(&queue, &rx, 40U, frame, sizeof(frame),
+                                        &frame_len),
+           MB_TINY_FRAME_ERROR);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_pending(&queue), 5U);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_process(&queue, &rx, 40U, frame, sizeof(frame),
+                                        &frame_len),
+           MB_TINY_FRAME_ERROR);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_pending(&queue), 4U);
+  CHECK_EQ(mb_tiny_rtu_rx_queue_process(&queue, &rx, 40U, frame, sizeof(frame),
+                                        &frame_len),
+           MB_TINY_FRAME_READY);
+  CHECK_EQ(frame_len, 4U);
+  CHECK_EQ(frame[0], 0x40U);
+  CHECK_EQ(frame[3], 0x43U);
+  CHECK_EQ(rx.dropped_frames, 1U);
+  CHECK(mb_tiny_rtu_rx_queue_is_idle(&queue, &rx));
+}
+
 static void test_rtu_receive_queue(void) {
   mb_tiny_rtu_rx_queue_t queue;
   mb_tiny_rtu_rx_slot_t slots[10];
@@ -1317,6 +1381,7 @@ static void test_initialization_and_address_validation(void) {
 int main(void) {
   test_crc();
   test_rtu_receive_framing();
+  test_rtu_strict_inter_char_gap();
   test_rtu_receive_queue();
   test_rtu_nonblocking_tx();
   test_rtu_nonblocking_master();
