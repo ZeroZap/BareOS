@@ -120,7 +120,9 @@ this diagnostic value; reinitialization clears it.
 
 Call `mb_tiny_rtu_rx_queue_is_idle()` from power-management eligibility logic.
 Do not enter a sleep mode that stops the UART or shared timestamp source while
-it reports busy.
+it reports busy. If an ISR enqueues a byte after the main loop snapshots
+`now_ms`, queue processing keeps the partial frame active until a later valid
+time snapshot reaches `t3.5`; unsigned tick wraparound remains supported.
 
 ## Non-blocking RS-485 TX
 

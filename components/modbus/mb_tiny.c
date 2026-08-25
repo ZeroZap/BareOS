@@ -48,6 +48,10 @@ static bool mb_unit_id_is_valid(uint8_t unit_id) {
   return unit_id >= 1U && unit_id <= 247U;
 }
 
+static bool mb_time_reached(uint32_t now_ms, uint32_t timestamp_ms) {
+  return (int32_t)(now_ms - timestamp_ms) >= 0;
+}
+
 static bool mb_range_contains(uint16_t map_start, uint16_t map_count,
                               uint16_t req_start, uint16_t req_count) {
   uint32_t map_end;
@@ -220,7 +224,7 @@ int mb_tiny_rtu_rx_poll(mb_tiny_rtu_rx_t *rx, uint32_t now_ms, uint8_t *frame,
     return MB_TINY_INVALID_PARAM;
   }
   *frame_len = 0U;
-  if (!rx->receiving ||
+  if (!rx->receiving || !mb_time_reached(now_ms, rx->last_byte_ms) ||
       (uint32_t)(now_ms - rx->last_byte_ms) < rx->frame_gap_ms) {
     return MB_TINY_IGNORED;
   }
